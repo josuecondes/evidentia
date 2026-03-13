@@ -81,26 +81,30 @@ function App() {
 const HomeRedirect = () => {
   const { user, profile, loading } = useAuth()
 
-  if (loading) {
+  // Si no hay usuario, siempre a login
+  if (!user && !loading) return <Navigate to="/login" />
+  
+  // Si tenemos el perfil cargado, redirigimos según rol
+  if (profile) {
+    if (profile.rol === 'admin') return <Navigate to="/admin" />
+    return <Navigate to="/cliente/calendario" />
+  }
+
+  // Si está cargando y no tenemos info, esperamos un poco
+  if (loading && !user) {
     return <div className="flex h-[100dvh] items-center justify-center font-sans bg-[#0f1210] text-[#22c55e]">
       <div className="w-8 h-8 border-3 border-[#22c55e]/20 border-t-[#22c55e] rounded-full animate-spin" />
     </div>
   }
 
-  if (!user) return <Navigate to="/login" />
-
-  // Si tenemos el perfil cargado de base de datos
-  if (profile) {
-    if (profile.rol === 'admin') return <Navigate to="/admin" />
-    return <Navigate to="/cliente/calendario" /> // Cliente por defecto
+  // Fallback si tenemos user pero no profile (o sigue cargando profile)
+  if (user) {
+    const isMailAdmin = user?.email === 'admin@gmail.com' || user?.email === 'josue@gmail.com';
+    if (isMailAdmin) return <Navigate to="/admin" />
+    return <Navigate to="/cliente/calendario" />
   }
 
-  // Fallback: Si el perfil falló pero estamos autenticados
-  console.warn("HomeRedirect: Profile is missing, falling back to metadata or cliente");
-  const isMailAdmin = user?.email === 'admin@gmail.com' || user?.email === 'josue@gmail.com';
-  if (isMailAdmin) return <Navigate to="/admin" />
-
-  return <Navigate to="/cliente/calendario" />
+  return <Navigate to="/login" />
 }
 
 export default App
