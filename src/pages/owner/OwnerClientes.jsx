@@ -5,7 +5,8 @@ import { logRegistro } from '../../utils/registro'
 import {
     Search, Plus, Archive, Trash2, MoreVertical, X,
     ChevronLeft, ChevronRight, Edit2, Check, Loader2,
-    User2, Phone, Mail, Calendar, DollarSign, Clock
+    User2, Phone, Mail, Calendar, DollarSign, Clock,
+    Eye, EyeOff
 } from 'lucide-react'
 
 const DIAS = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab']
@@ -19,13 +20,14 @@ function cn(...c) { return c.filter(Boolean).join(' ') }
 const ModalCrearCliente = ({ onClose, onCreated, moduloOrigen = 'clientes' }) => {
     const { user } = useAuth()
     const [form, setForm] = useState({
-        nombre: '', email: '', telefono: '',
+        nombre: '', email: '', password: '',
         sesiones_semanales: 1,
         distribucion_semanal: ['lun'],
         hora_habitual: '10:00',
         precio_por_sesion: 0,
         fecha_inicio: '',
     })
+    const [showPassword, setShowPassword] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
 
@@ -40,20 +42,28 @@ const ModalCrearCliente = ({ onClose, onCreated, moduloOrigen = 'clientes' }) =>
 
     const handleSubmit = async () => {
         if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
+        if (!form.email.trim()) { setError('El email es obligatorio'); return }
+        if (!form.password || form.password.length < 6) { setError('La contraseña debe tener al menos 6 caracteres'); return }
         if (form.distribucion_semanal.length === 0) { setError('Selecciona al menos un día'); return }
         setLoading(true)
         setError('')
         try {
-            // 1. Crear usuario en tabla usuarios
-            const { data: nuevoUsuario, error: uErr } = await supabase
-                .from('usuarios')
-                .insert({ nombre: form.nombre.trim(), email: form.email.trim() || `cliente_${Date.now()}@interno.ev`, rol: 'cliente' })
-                .select().single()
-            if (uErr) throw uErr
+            // 1. Crear usuario en Supabase Auth (el trigger on_auth_user_created
+            //    sincroniza automáticamente con public.usuarios)
+            const { data: authData, error: authErr } = await supabase.auth.signUp({
+                email: form.email.trim(),
+                password: form.password,
+                options: {
+                    data: { full_name: form.nombre.trim() }
+                }
+            })
+            if (authErr) throw authErr
+            const nuevoUsuarioId = authData.user?.id
+            if (!nuevoUsuarioId) throw new Error('No se pudo obtener el ID del nuevo usuario')
 
-            // 2. Crear estructura base
+            // 2. Crear estructura base usando el id del usuario de Auth
             const { error: eErr } = await supabase.from('clientes_estructura').insert({
-                usuario_id: nuevoUsuario.id,
+                usuario_id: nuevoUsuarioId,
                 sesiones_semanales: form.sesiones_semanales,
                 distribucion_semanal: form.distribucion_semanal,
                 hora_habitual: form.hora_habitual,
@@ -63,18 +73,18 @@ const ModalCrearCliente = ({ onClose, onCreated, moduloOrigen = 'clientes' }) =>
             })
             if (eErr) throw eErr
 
-            // 3. Registro
+            // 3. Registro de actividad
             await logRegistro({
                 accion: 'crear_cliente',
                 entidad: 'cliente',
-                entidad_id: nuevoUsuario.id,
+                entidad_id: nuevoUsuarioId,
                 modulo_origen: moduloOrigen,
-                cliente_id: nuevoUsuario.id,
-                valor_nuevo: form,
+                cliente_id: nuevoUsuarioId,
+                valor_nuevo: { nombre: form.nombre, email: form.email },
                 autor_id: user?.id,
             })
 
-            onCreated(nuevoUsuario)
+            onCreated({ id: nuevoUsuarioId, nombre: form.nombre.trim(), email: form.email.trim() })
             onClose()
         } catch (e) {
             setError(e.message)
@@ -100,9 +110,28 @@ const ModalCrearCliente = ({ onClose, onCreated, moduloOrigen = 'clientes' }) =>
                             className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" placeholder="Nombre completo" />
                     </div>
                     <div>
-                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Email (opcional)</label>
-                        <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Email *</label>
+                        <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                             className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" placeholder="email@ejemplo.com" />
+                    </div>
+                    <div>
+                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Contraseña *</label>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={form.password}
+                                onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 pr-11 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors"
+                                placeholder="Mínimo 6 caracteres"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(v => !v)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-white/30 hover:text-white/60 transition-colors"
+                            >
+                                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                        </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
