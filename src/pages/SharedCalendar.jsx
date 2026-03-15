@@ -852,7 +852,7 @@ const SharedCalendar = ({ onNavigate }) => {
         const COL = '44px repeat(6, 1fr)'
         const LINE = '#d0d5e8' // color visible de las líneas de la cuadrícula
         const BG_WHITE = '#ffffff'
-        const BG_PAST  = '#f5f6fa'
+        // BG_PAST se hereda del scope externo (#e5e7eb) para coincidir con el color de los bloqueos
         const BG_SEL   = '#fef9c3'
 
         return (
