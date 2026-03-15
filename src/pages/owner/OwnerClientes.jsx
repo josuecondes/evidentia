@@ -48,30 +48,43 @@ const ModalCrearCliente = ({ onClose, onCreated, moduloOrigen = 'clientes' }) =>
         setLoading(true)
         setError('')
         try {
-            // 1. Crear usuario en Supabase Auth (el trigger on_auth_user_created
-            //    sincroniza automáticamente con public.usuarios)
+            // 1. Crear usuario en Supabase Auth.
+            //    Todos los datos de estructura van en el metadata para que el trigger
+            //    on_auth_user_created (SECURITY DEFINER) cree clientes_estructura de forma
+            //    atómica, sin que el frontend tenga que hacer un INSERT posterior que
+            //    fallaría por RLS al cambiar la sesión al nuevo usuario.
             const { data: authData, error: authErr } = await supabase.auth.signUp({
                 email: form.email.trim(),
                 password: form.password,
                 options: {
-                    data: { full_name: form.nombre.trim() }
+                    data: {
+                        full_name: form.nombre.trim(),
+                        sesiones_semanales: form.sesiones_semanales,
+                        distribucion_semanal: form.distribucion_semanal,
+                        hora_habitual: form.hora_habitual,
+                        precio_por_sesion: parseFloat(form.precio_por_sesion) || 0,
+                        fecha_inicio: form.fecha_inicio || '',
+                    }
                 }
             })
             if (authErr) throw authErr
             const nuevoUsuarioId = authData.user?.id
             if (!nuevoUsuarioId) throw new Error('No se pudo obtener el ID del nuevo usuario')
 
-            // 2. Crear estructura base usando el id del usuario de Auth
-            const { error: eErr } = await supabase.from('clientes_estructura').insert({
-                usuario_id: nuevoUsuarioId,
-                sesiones_semanales: form.sesiones_semanales,
-                distribucion_semanal: form.distribucion_semanal,
-                hora_habitual: form.hora_habitual,
-                precio_por_sesion: parseFloat(form.precio_por_sesion) || 0,
-                fecha_inicio: form.fecha_inicio || null,
-                estado: 'activo'
-            })
-            if (eErr) throw eErr
+            // 2. Esperar a que el trigger de BD propague clientes_estructura (máx. 3 s).
+            //    El trigger corre en el servidor (SECURITY DEFINER) y tiene permisos
+            //    para escribir aunque la sesión del admin haya cambiado momentáneamente.
+            let intentos = 0
+            while (intentos < 10) {
+                await new Promise(r => setTimeout(r, 300))
+                const { data: est } = await supabase
+                    .from('clientes_estructura')
+                    .select('usuario_id')
+                    .eq('usuario_id', nuevoUsuarioId)
+                    .maybeSingle()
+                if (est) break
+                intentos++
+            }
 
             // 3. Registro de actividad
             await logRegistro({
