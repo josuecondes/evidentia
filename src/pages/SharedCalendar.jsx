@@ -22,11 +22,14 @@ function cn(...inputs) { return twMerge(clsx(inputs)) }
 // ─── Botón cuadrado 3D (inline, para modales de SharedCalendar) ───────────────
 const Btn3DInline = ({
     onClick, disabled = false, loading = false,
-    color = '#2b47c9', shadow = 'rgba(43,71,201,0.35)',
+    color = '#2b47c9', shadow = 'rgba(43,71,201,0.45)',
     textColor = '#ffffff',
     icon, label,
 }) => {
     const [pressed, setPressed] = React.useState(false)
+    const isLight = textColor !== '#ffffff'
+    // Color de borde 3D inferior (un tono más oscuro que el fill)
+    const shadowBot = isLight ? '#aab2cc' : shadow
     return (
         <button
             onClick={onClick}
@@ -39,20 +42,31 @@ const Btn3DInline = ({
                 aspectRatio: '1 / 1',
                 minHeight: 80,
                 minWidth: 74,
-                background: disabled ? '#d1d5db' : color,
+                background: disabled
+                    ? '#d1d5db'
+                    : isLight
+                        ? `linear-gradient(180deg, #ffffff 0%, ${color} 100%)`
+                        : `linear-gradient(180deg, ${color}dd 0%, ${color} 100%)`,
                 color: disabled ? '#9ca3af' : textColor,
-                border: 'none',
+                border: isLight
+                    ? '1.5px solid #bec8e8'
+                    : `1px solid ${color}`,
                 borderRadius: 18,
                 cursor: disabled ? 'not-allowed' : 'pointer',
                 fontWeight: 900,
                 fontSize: 11,
-                letterSpacing: '0.05em',
+                letterSpacing: '0.06em',
                 textTransform: 'uppercase',
                 display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center', gap: 6,
-                boxShadow: pressed || disabled ? 'none' : `0 6px 0 ${shadow}, 0 10px 20px ${shadow}`,
+                boxShadow: pressed || disabled
+                    ? 'none'
+                    : isLight
+                        ? `0 5px 0 ${shadowBot}, inset 0 1px 0 rgba(255,255,255,0.95)`
+                        : `0 6px 0 ${shadow}, inset 0 1px 0 rgba(255,255,255,0.2)`,
                 transform: pressed ? 'translateY(4px)' : 'translateY(0)',
                 transition: 'transform 0.08s, box-shadow 0.08s',
+                textShadow: (!isLight && !disabled) ? '0 1px 2px rgba(0,0,0,0.28)' : 'none',
             }}
         >
             {loading
@@ -72,12 +86,14 @@ const BtnVolverInline = ({ onClick, label = 'Volver' }) => (
         onClick={onClick}
         style={{
             width: '100%', padding: '13px 0', marginTop: 12,
-            background: '#f2f4f8', color: '#6b7a99',
-            border: '1.5px solid #e2e6f0', borderRadius: 16,
+            background: '#ffffff', color: '#5c6b8a',
+            border: '1.5px solid #bec8e8', borderRadius: 16,
             fontWeight: 800, fontSize: 13, cursor: 'pointer',
+            boxShadow: '0 3px 0 #aab2cc',
+            letterSpacing: '0.04em',
         }}
-        onMouseEnter={e => e.currentTarget.style.background = '#e2e6f0'}
-        onMouseLeave={e => e.currentTarget.style.background = '#f2f4f8'}
+        onMouseEnter={e => e.currentTarget.style.background = '#eef0f7'}
+        onMouseLeave={e => e.currentTarget.style.background = '#ffffff'}
     >
         {label}
     </button>

@@ -6,19 +6,23 @@ import { Plus, X, Loader2, Move, Lock, Ban, Trash2 } from 'lucide-react'
 
 // ─── TOKENS FORÇA LIGHT ───────────────────────────────────────────────────────
 const F = {
-    blue:     '#2b47c9',
-    blueHov:  '#1e34a6',
-    blueSoft: '#f0f3ff',
-    gray:     '#6b7a99',
-    grayLine: '#e2e6f0',
-    grayBg:   '#f2f4f8',
-    white:    '#ffffff',
-    red:      '#ef4444',
-    redHov:   '#dc2626',
-    redSoft:  '#fef2f2',
-    green:    '#22c55e',
-    greenSoft:'#f0fdf4',
-    orange:   '#f97316',
+    blue:       '#2b47c9',
+    blueHov:    '#1e34a6',
+    blueSoft:   '#eef1fc',
+    gray:       '#5c6b8a',
+    grayLine:   '#c8d0ee',
+    grayBg:     '#eef0f7',
+    white:      '#ffffff',
+    red:        '#e53935',
+    redHov:     '#c62828',
+    redSoft:    '#fff0f0',
+    green:      '#19a34a',
+    greenSoft:  '#edfbf3',
+    orange:     '#f97316',
+    // Card
+    cardBg:     '#f5f7ff',
+    cardBorder: '#bec8e8',
+    cardShadow: '0 20px 80px rgba(43,71,201,0.22), 0 4px 16px rgba(0,0,0,0.08)',
 }
 
 // ─── OVERLAY CENTRADO (idéntico en todos los modales) ─────────────────────────
@@ -43,13 +47,13 @@ const Card = ({ children, onClick }) => (
     <div
         onClick={e => { e.stopPropagation(); onClick?.() }}
         style={{
-            background: F.white,
-            border: `1.5px solid ${F.grayLine}`,
+            background: F.cardBg,
+            border: `1.5px solid ${F.cardBorder}`,
             borderRadius: 28,
             padding: '32px 28px 28px',
             width: '100%',
             maxWidth: 380,
-            boxShadow: '0 16px 60px rgba(43,71,201,0.18)',
+            boxShadow: F.cardShadow,
         }}
     >
         {children}
@@ -60,11 +64,12 @@ const Card = ({ children, onClick }) => (
 // Aspecto: fondo de color, sombra de color más oscura abajo = efecto 3D
 const Btn3D = ({
     onClick, disabled = false, loading = false,
-    color = F.blue, colorHov = F.blueHov, shadowColor = 'rgba(43,71,201,0.35)',
+    color = F.blue, colorHov = F.blueHov, shadowColor = 'rgba(43,71,201,0.45)',
     textColor = F.white,
     icon, label, style = {},
 }) => {
     const [pressed, setPressed] = useState(false)
+    const isLight = textColor !== F.white
     return (
         <button
             onClick={onClick}
@@ -77,22 +82,31 @@ const Btn3D = ({
                 aspectRatio: '1 / 1',
                 minHeight: 80,
                 minWidth: 80,
-                background: disabled ? '#d1d5db' : color,
+                background: disabled
+                    ? '#d1d5db'
+                    : isLight
+                        ? `linear-gradient(180deg, #ffffff 0%, ${color} 100%)`
+                        : `linear-gradient(180deg, ${color}dd 0%, ${colorHov} 100%)`,
                 color: disabled ? '#9ca3af' : textColor,
-                border: 'none',
+                border: isLight
+                    ? `1.5px solid ${F.cardBorder}`
+                    : `1px solid ${colorHov}`,
                 borderRadius: 18,
                 cursor: disabled ? 'not-allowed' : 'pointer',
                 fontWeight: 900,
                 fontSize: 11,
-                letterSpacing: '0.05em',
+                letterSpacing: '0.06em',
                 textTransform: 'uppercase',
                 display: 'flex', flexDirection: 'column',
                 alignItems: 'center', justifyContent: 'center', gap: 6,
                 boxShadow: pressed || disabled
                     ? 'none'
-                    : `0 6px 0 ${disabled ? 'rgba(0,0,0,0.1)' : shadowColor}, 0 10px 20px ${shadowColor}`,
+                    : isLight
+                        ? `0 5px 0 #aab2cc, inset 0 1px 0 rgba(255,255,255,0.95)`
+                        : `0 6px 0 ${shadowColor}, inset 0 1px 0 rgba(255,255,255,0.22)`,
                 transform: pressed ? 'translateY(4px)' : 'translateY(0)',
                 transition: 'transform 0.08s ease, box-shadow 0.08s ease',
+                textShadow: (!isLight && !disabled) ? '0 1px 2px rgba(0,0,0,0.28)' : 'none',
                 ...style,
             }}
         >
@@ -114,18 +128,20 @@ const BtnVolver = ({ onClick, label = 'Volver' }) => (
         style={{
             width: '100%',
             padding: '14px 0',
-            background: F.grayBg,
+            background: '#ffffff',
             color: F.gray,
-            border: `1.5px solid ${F.grayLine}`,
+            border: `1.5px solid ${F.cardBorder}`,
             borderRadius: 16,
             fontWeight: 800,
             fontSize: 13,
             cursor: 'pointer',
             marginTop: 12,
+            boxShadow: '0 3px 0 #aab2cc',
             transition: 'background 0.15s',
+            letterSpacing: '0.04em',
         }}
-        onMouseEnter={e => e.currentTarget.style.background = '#e2e6f0'}
-        onMouseLeave={e => e.currentTarget.style.background = F.grayBg}
+        onMouseEnter={e => e.currentTarget.style.background = F.grayBg}
+        onMouseLeave={e => e.currentTarget.style.background = '#ffffff'}
     >
         {label}
     </button>
