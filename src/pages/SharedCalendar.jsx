@@ -30,6 +30,8 @@ const HORAS_SELECTOR = ['Modificar hora:',
     ...HORAS.map(h => h)
 ]
 
+const dayAbbrs = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+
 const SharedCalendar = ({ onNavigate }) => {
     const { user, profile, signOut } = useAuth()
     const isAdmin = profile?.rol === 'admin'
@@ -40,12 +42,18 @@ const SharedCalendar = ({ onNavigate }) => {
     // Unificación de datos
     const [sesiones, setSesiones] = useState([])
     const [bloqueos, setBloqueos] = useState([])
+    const [config, setConfig] = useState(null)
     const [isLoadingData, setIsLoadingData] = useState(true)
-    const isFetchingRef = useRef(false) // Mutex to prevent duplicate fetches
+    const isFetchingRef = useRef(false) 
     
     const [bookingSuccess, setBookingSuccess] = useState(false)
     const [clientes, setClientes] = useState([])
     const [selectedClientId, setSelectedClientId] = useState('')
+
+    const LINE = '#d0d5e8'
+    const BG_WHITE = '#ffffff'
+    const BG_PAST  = '#e5e7eb' // Gris unificado con el de los bloqueos
+    const BG_SEL   = '#fef9c3'
 
     // Modal de confirmación de nueva reserva (Cliente)
     const [selectedSlot, setSelectedSlot] = useState(null)
@@ -216,7 +224,7 @@ const SharedCalendar = ({ onNavigate }) => {
         }
     }
 
-    const handleSlotClick = (e, day, hora, isBookable, isNotEnoughTime, isSelectableForBlock, isEditable, overlappingCita) => {
+    const handleSlotClick = (e, day, hora, isBookable, isNotEnoughTime, isSelectableForBlock, isEditable, overlappingCita, isPast) => {
         if (longPressFired.current) { longPressFired.current = false; e.preventDefault(); return; }
 
         if (movingCita) {
@@ -242,6 +250,10 @@ const SharedCalendar = ({ onNavigate }) => {
                     setMenuHuecoActivo({ fecha: format(day, 'yyyy-MM-dd'), hora });
                 } else {
                     // Cliente
+                    if (isPast) {
+                        alert('No se pueden realizar reservas en horarios que ya han pasado.');
+                        return;
+                    }
                     if (isNotEnoughTime) {
                         alert('Se necesita al menos 1 hora disponible para reservar.')
                         return
@@ -395,7 +407,32 @@ const SharedCalendar = ({ onNavigate }) => {
         }
     }
 
-    useEffect(() => { fetchData() }, [currentDate])
+    useEffect(() => {
+        fetchData()
+        loadConfig()
+    }, [user, currentDate])
+
+    const loadConfig = async () => {
+        const { data } = await supabase.from('configuracion').select('*').limit(1).maybeSingle()
+        if (data) setConfig(data)
+    }
+
+    const isWithinLeadTime = (date, hora, type = 'cancelacion') => {
+        if (!config || isAdmin) return false
+        const horasLead = type === 'cancelacion' 
+            ? config.ventana_cancelacion_horas 
+            : config.ventana_modificacion_horas
+        
+        const now = new Date()
+        const [h, m] = hora.split(':').map(Number)
+        const targetDate = new Date(date)
+        targetDate.setHours(h, m, 0, 0)
+        
+        const diffMs = targetDate - now
+        const diffHours = diffMs / (1000 * 60 * 60)
+        
+        return diffHours < horasLead
+    }
 
     useEffect(() => {
         if (isAdmin) {
@@ -419,17 +456,25 @@ const SharedCalendar = ({ onNavigate }) => {
             const [h, m] = selectedSlot.hora.split(':').map(Number);
             const horaFin = `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
+            let finalOwnerId = isAdmin ? user.id : null;
+            if (!isAdmin) {
+                const { data: admins } = await supabase.from('usuarios').select('id').eq('rol', 'admin').limit(1);
+                if (admins && admins.length > 0) finalOwnerId = admins[0].id;
+            }
+
             await runSupabaseQuery(async () => {
-                const { error } = await supabase.from('sesiones').insert([{
+                const payload = {
                     cliente_id: targetUserId,
-                    owner_id: isAdmin ? user.id : null,
+                    owner_id: finalOwnerId,
                     fecha: format(selectedSlot.day, 'yyyy-MM-dd'),
                     hora_inicio: selectedSlot.hora,
                     hora_fin: horaFin,
                     estado: 'programada',
                     tipo: 'regular',
                     pago_estado: 'pendiente'
-                }])
+                };
+
+                const { error } = await supabase.from('sesiones').insert([payload]);
                 if (error) throw error
             })
 
@@ -455,6 +500,11 @@ const SharedCalendar = ({ onNavigate }) => {
 
     const handleModificar = async () => {
         if (!modFecha || !modHora || !selectedEvent) return
+        if (isWithinLeadTime(selectedEvent.fecha, selectedEvent.hora_inicio, 'modificacion')) {
+            alert(`No se puede modificar la reserva con menos de ${config?.ventana_modificacion_horas || 24} horas de antelación.`);
+            return;
+        }
+
         setModLoading(true)
         try {
             const [h, m] = modHora.split(':').map(Number);
@@ -462,9 +512,19 @@ const SharedCalendar = ({ onNavigate }) => {
 
             await runSupabaseQuery(async () => {
                 const { error } = await supabase.from(selectedEvent.isBlock ? 'bloqueos' : 'sesiones')
-                    .update({ fecha: modFecha, hora_inicio: modHora, hora_fin: horaFin })
+                    .update({ fecha: modFecha, hora_inicio: modHora, hora_fin: horaFin, updated_at: new Date().toISOString() })
                     .eq('id', selectedEvent.id)
                 if (error) throw error
+
+                if (!selectedEvent.isBlock) {
+                    await logRegistro({
+                        accion: 'modificar_sesion_cliente', entidad: 'sesion', entidad_id: selectedEvent.id,
+                        modulo_origen: 'calendario_cliente', cliente_id: selectedEvent.cliente_id,
+                        valor_anterior: { fecha: format(selectedEvent.fecha, 'yyyy-MM-dd'), hora: selectedEvent.hora_inicio },
+                        valor_nuevo: { fecha: modFecha, hora: modHora },
+                        autor_id: user?.id
+                    });
+                }
             })
 
             await fetchData()
@@ -487,11 +547,29 @@ const SharedCalendar = ({ onNavigate }) => {
 
     const handleCancelar = async () => {
         if (!selectedEvent) return
+        if (isWithinLeadTime(selectedEvent.fecha, selectedEvent.hora_inicio, 'cancelacion')) {
+            alert(`No se puede anular la reserva con menos de ${config?.ventana_cancelacion_horas || 24} horas de antelación.`);
+            return;
+        }
+
         setCancelLoading(true)
         try {
             await runSupabaseQuery(async () => {
-                const { error } = await supabase.from(selectedEvent.isBlock ? 'bloqueos' : 'sesiones').delete().eq('id', selectedEvent.id)
-                if (error) throw error
+                if (selectedEvent.isBlock) {
+                    const { error } = await supabase.from('bloqueos').delete().eq('id', selectedEvent.id)
+                    if (error) throw error
+                } else {
+                    const { error } = await supabase.from('sesiones')
+                        .update({ estado: 'cancelada', updated_at: new Date().toISOString() })
+                        .eq('id', selectedEvent.id)
+                    if (error) throw error
+                    
+                    await logRegistro({
+                        accion: 'cancelar_sesion_cliente', entidad: 'sesion', entidad_id: selectedEvent.id,
+                        modulo_origen: 'calendario_cliente', cliente_id: selectedEvent.cliente_id,
+                        valor_anterior: { estado: selectedEvent.estado }, valor_nuevo: { estado: 'cancelada' }, autor_id: user?.id
+                    });
+                }
             })
             await fetchData()
             setShowCancelModal(false)
@@ -590,9 +668,9 @@ const SharedCalendar = ({ onNavigate }) => {
         return slotDate < now
     }
 
-    const isSlotBookable = (day, hora) => {
+    const isSlotBookable = (day, hora, idToIgnore = null) => {
         if (hora === '19:30') return false
-        if (getCitaEnHora(day, hora)) return false
+        if (getCitaEnHora(day, hora, idToIgnore)) return false
 
         // Al ser sesiones de 1 hora, la siguiente franja de 30 min también debe estar libre
         const [h, m] = hora.split(':').map(Number)
@@ -606,7 +684,7 @@ const SharedCalendar = ({ onNavigate }) => {
 
         // Si no existe la siguiente franja en nuestro horario o está ocupada, no es reservable
         if (!HORAS.includes(nextHora)) return false
-        if (getCitaEnHora(day, nextHora)) return false
+        if (getCitaEnHora(day, nextHora, idToIgnore)) return false
 
         return true
     }
@@ -614,6 +692,12 @@ const SharedCalendar = ({ onNavigate }) => {
     const openSlot = (day, hora) => {
         if (isPastSlot(day, hora)) return
         if (!isSlotBookable(day, hora)) return
+
+        // Regla 24h para nuevas reservas (usamos ventana_modificacion_horas como referencia general)
+        if (isWithinLeadTime(day, hora, 'modificacion')) {
+            alert(`Lo sentimos, las reservas deben realizarse con al menos ${config?.ventana_modificacion_horas || 24} horas de antelación.`);
+            return;
+        }
         
         if (isAdmin) {
             setMenuHuecoActivo({ fecha: format(day, 'yyyy-MM-dd'), hora });
@@ -631,16 +715,20 @@ const SharedCalendar = ({ onNavigate }) => {
         setShowDetailModal(true) 
     }
 
-    const getCitaEnHora = (day, hora) => {
+    const getCitaEnHora = (day, hora, idToIgnore = null) => {
         const [h, m] = hora.split(':').map(Number);
         const t = h * 60 + m;
 
         // Primero comprobar bloqueos completos de día
         const bloqueoCompleto = bloqueos.find(b => isSameDay(b.fecha, day) && b.tipo === 'dia_completo');
-        if (bloqueoCompleto) return { ...bloqueoCompleto, hora_inicio: '00:00', hora_fin: '23:59' };
+        if (bloqueoCompleto) {
+            if (idToIgnore && bloqueoCompleto.id === idToIgnore) return null;
+            return { ...bloqueoCompleto, hora_inicio: HORAS[0], hora_fin: '20:30' };
+        }
 
         // Luego buscar sesion o bloqueo por franja/hueco
         const item = [...sesiones, ...bloqueos.filter(b => b.tipo !== 'dia_completo')].find(c => {
+            if (idToIgnore && c.id === idToIgnore) return false;
             if (!isSameDay(c.fecha, day)) return false;
             if (!c.hora_inicio || !c.hora_fin) return false;
             const [sh, sm] = c.hora_inicio.split(':').map(Number);
@@ -651,6 +739,16 @@ const SharedCalendar = ({ onNavigate }) => {
         });
         
         return item || null;
+    }
+
+    const getEventSlots = (cita) => {
+        if (!cita) return 2;
+        if (cita.tipo === 'dia_completo') return HORAS.length;
+        if (!cita.hora_inicio || !cita.hora_fin) return 2;
+        const [sh, sm] = cita.hora_inicio.split(':').map(Number);
+        const [eh, em] = cita.hora_fin.split(':').map(Number);
+        const slots = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 30);
+        return slots > 0 ? slots : 2;
     }
 
 
@@ -667,22 +765,20 @@ const SharedCalendar = ({ onNavigate }) => {
     const renderMonthly = () => {
         const start = startOfWeek(startOfMonth(currentDate), { weekStartsOn: 1 })
         const end = endOfWeek(endOfMonth(currentDate), { weekStartsOn: 1 })
-
-        // Include all 7 days (Mon–Sun)
         const days = eachDayOfInterval({ start, end })
 
         return (
-            <div style={{ background: '#ffffff', color: '#2b47c9' }}>
+            <div style={{ background: '#ffffff', color: '#2b47c9', width: '100%', overflow: 'hidden', boxSizing: 'border-box' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid #e2e6f0' }}>
                     {['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'].map((d, i) => (
                         <div key={d} style={{
                             padding: '10px 0', textAlign: 'center', fontSize: 9, fontWeight: 800,
                             color: '#2b47c9', textTransform: 'uppercase', letterSpacing: '0.06em',
-                            borderRight: i < 6 ? '1px solid #e2e6f0' : 'none',
+                            borderRight: '1px solid #e2e6f0',
                         }}>{d}</div>
                     ))}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', width: '100%' }}>
                     {days.map((day, i) => {
                         const today = isSameDay(day, new Date())
                         const isThisMonth = isSameMonth(day, currentDate)
@@ -691,59 +787,53 @@ const SharedCalendar = ({ onNavigate }) => {
                                 onClick={() => { if (isAdmin) { setCurrentDate(day); setView('diaria'); } }}
                                 style={{
                                     boxSizing: 'border-box',
-                                    minHeight: 70, padding: 6,
-                                    borderRight: (i % 7) < 6 ? '1px solid #e2e6f0' : 'none',
-                                    borderBottom: i < days.length - 7 ? '1px solid #e2e6f0' : 'none',
+                                    minHeight: 70, padding: 4,
+                                    borderRight: '1px solid #e2e6f0',
+                                    borderBottom: '1px solid #e2e6f0',
                                     opacity: isThisMonth ? 1 : 0.3,
                                     cursor: isAdmin ? 'pointer' : 'default',
                                     background: '#ffffff',
+                                    minWidth: 0,
+                                    overflow: 'hidden'
                                 }}>
                                 <span style={{
                                     fontSize: 11, fontWeight: 800,
                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    width: 22, height: 22, borderRadius: '50%',
+                                    width: 20, height: 20, borderRadius: '50%',
                                     background: today ? '#2b47c9' : 'transparent',
                                     color: today ? '#ffffff' : '#2b47c9',
+                                    margin: '0 auto'
                                 }}>{format(day, 'd')}</span>
                                 <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
                                     {sesiones.filter(c => isSameDay(c.fecha, day))
                                         .filter(c => isAdmin ? true : c.cliente_id === user?.id)
-                                        .filter(c => c.estado !== 'cancelada' || isAdmin) // Admin ve canceladas, cliente no
+                                        .filter(c => c.estado !== 'cancelada' || isAdmin)
                                         .map(c => {
                                             const isCancelled = c.estado === 'cancelada';
                                             return (
                                                 <div key={c.id}
                                                     style={{
-                                                        borderRadius: 6, width: '100%',
+                                                        borderRadius: 4, width: '100%',
                                                         background: isCancelled ? 'rgba(43,71,201,0.2)' : '#2b47c9',
-                                                        boxShadow: movingCita?.id === c.id ? '0 0 15px rgba(255,0,85,0.4)' : '0 1px 4px rgba(43,71,201,0.3)',
-                                                        padding: isAdmin ? '1px 3px' : '3px 2px',
-                                                        display: 'flex', flexDirection: isAdmin ? 'row' : 'column',
-                                                        alignItems: 'center', justifyContent: 'center',
+                                                        boxShadow: movingCita?.id === c.id ? '0 0 10px rgba(255,0,85,0.4)' : 'none',
+                                                        padding: '1px 2px',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                         cursor: 'pointer',
-                                                        border: movingCita?.id === c.id ? '2px solid #ff0055' : isCancelled ? '1px dashed rgba(43,71,201,0.4)' : 'none',
+                                                        border: movingCita?.id === c.id ? '1.5px solid #ff0055' : isCancelled ? '1px dashed rgba(43,71,201,0.4)' : 'none',
                                                         opacity: isCancelled ? 0.55 : 1,
+                                                        overflow: 'hidden'
                                                     }}
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         if (movingCita) { if (movingCita.id === c.id) setMovingCita(null); return; }
                                                         openEvent(c)
-                                                    }}
-                                                    {...getAppointmentLongPressProps(c)}>
-                                                    {isAdmin ? (
-                                                        <span style={{ fontSize: 7, fontWeight: 800, color: isCancelled ? 'rgba(43,71,201,0.7)' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                            {isCancelled ? '✗ ' : ''}{c.usuarios?.nombre || 'Cliente'}
-                                                        </span>
-                                                    ) : (
-                                                        <>
-                                                            <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', lineHeight: 1 }}>{c.hora_inicio}</span>
-                                                            <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', lineHeight: 1 }}>{c.hora_fin}</span>
-                                                        </>
-                                                    )}
+                                                    }}>
+                                                    <span style={{ fontSize: 7, fontWeight: 800, color: isCancelled ? '#2b47c9' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                        {isAdmin ? (c.usuarios?.nombre || '...') : c.hora_inicio}
+                                                    </span>
                                                 </div>
                                             )
                                         })}
-                                    {/* Bloqueos NO se muestran en vista mensual */}
                                 </div>
                             </div>
                         )
@@ -756,95 +846,114 @@ const SharedCalendar = ({ onNavigate }) => {
 
     const renderWeekly = () => {
         const start = startOfWeek(currentDate, { weekStartsOn: 1 })
-        const days = Array.from({ length: 7 }, (_, i) => addDays(start, i)) // 7 días (Lunes a Domingo)
-        // Abreviaciones de días para el header
-        const dayAbbrs = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM']
+        // Generar sólo 6 días (Lunes a Sábado)
+        const days = Array.from({ length: 6 }, (_, i) => addDays(start, i))
+        const dayAbbrs = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB']
+        const COL = '44px repeat(6, 1fr)'
+        const LINE = '#d0d5e8' // color visible de las líneas de la cuadrícula
+        const BG_WHITE = '#ffffff'
+        const BG_PAST  = '#f5f6fa'
+        const BG_SEL   = '#fef9c3'
+
         return (
-            <div style={{ background: '#ffffff', overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 150px)' }}>
-                <div style={{ minWidth: 600, boxSizing: 'border-box', position: 'relative' }}>
-                    {/* CABECERA - HORA + días */}
-                    <div style={{ display: 'flex', borderBottom: '1px solid #e2e6f0', background: '#ffffff', position: 'sticky', top: 0, zIndex: 20 }}>
-                        {/* Columna HORA */}
-                        <div style={{ boxSizing: 'border-box', width: 44, flexShrink: 0, padding: '10px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #e2e6f0', background: '#ffffff' }}>
-                            <span style={{ fontSize: 9, fontWeight: 800, color: '#2b47c9', textTransform: 'uppercase', letterSpacing: '0.05em' }}></span>
-                        </div>
-                        {/* Columnas días */}
-                        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${days.length}, 1fr)`, boxSizing: 'border-box' }}>
-                            {days.map((day, i) => {
-                                const isToday = isSameDay(day, new Date())
-                                return (
-                                    <div key={i}
-                                        style={{ boxSizing: 'border-box', padding: '8px 2px', textAlign: 'center', borderLeft: i > 0 ? '1px solid #e2e6f0' : 'none', cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default' }}
-                                        onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('day', day, null); }}
-                                        {...getLongPressProps('day', day, null)}>
-                                        <p style={{ fontSize: 9, fontWeight: 800, color: '#2b47c9', textTransform: 'uppercase', marginBottom: 4 }}>{dayAbbrs[i]}</p>
-                                        <div style={{
-                                            fontSize: 12, fontWeight: 800, margin: '0 auto',
-                                            width: isToday ? 24 : 'auto', height: isToday ? 24 : 'auto',
-                                            borderRadius: isToday ? '50%' : 0,
-                                            border: isToday ? '2px solid #2b47c9' : 'none',
-                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                            color: '#2b47c9',
-                                        }}>
-                                            {format(day, 'd')}
-                                        </div>
+            <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 150px)', width: '100%' }}>
+                <div style={{ width: '100%' }}>
+
+                    {/* ── CABECERA STICKY ── */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: COL,
+                        columnGap: '1px',
+                        background: LINE,     /* los gaps muestran este color = líneas */
+                        position: 'sticky', top: 0, zIndex: 20,
+                        borderBottom: `2px solid ${LINE}`,
+                    }}>
+                        {/* Celda esquina */}
+                        <div style={{ background: BG_WHITE, minHeight: 44 }} />
+                        {days.map((day, i) => {
+                            const isToday = isSameDay(day, new Date())
+                            return (
+                                <div key={i}
+                                    style={{
+                                        background: BG_WHITE,
+                                        padding: '8px 2px', textAlign: 'center',
+                                        cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default',
+                                    }}
+                                    onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('day', day, null); }}
+                                    {...getLongPressProps('day', day, null)}>
+                                    <p style={{ fontSize: 9, fontWeight: 800, color: '#2b47c9', textTransform: 'uppercase', marginBottom: 4 }}>{dayAbbrs[i]}</p>
+                                    <div style={{
+                                        fontSize: 12, fontWeight: 800, margin: '0 auto',
+                                        width: isToday ? 24 : 'auto', height: isToday ? 24 : 'auto',
+                                        borderRadius: isToday ? '50%' : 0,
+                                        border: isToday ? '2px solid #2b47c9' : 'none',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        color: '#2b47c9',
+                                    }}>
+                                        {format(day, 'd')}
                                     </div>
-                                )
-                            })}
-                        </div>
+                                </div>
+                            )
+                        })}
                     </div>
 
-                    {/* CUERPO CALENDARIO */}
-                    {HORAS.map(hora => (
-                        <div key={hora} style={{ display: 'flex', borderBottom: '1px solid #e2e6f0', height: 40 }}>
-                            {/* Celda de hora */}
-                            <div style={{
-                                boxSizing: 'border-box',
-                                width: 44, flexShrink: 0, display: 'flex', alignItems: 'flex-start',
-                                justifyContent: 'center', paddingTop: 4, borderRight: '1px solid #e2e6f0',
-                                background: isSelected('hour', null, hora) ? '#fef9c3' : '#ffffff',
-                                cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default',
-                            }}
-                                onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('hour', null, hora); }}
-                                {...getLongPressProps('hour', null, hora)}>
-                                <span style={{ fontSize: 9, fontWeight: 700, color: '#2b47c9' }}>{hora}</span>
-                            </div>
-                            {/* Celdas de cada día */}
-                            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${days.length}, 1fr)`, boxSizing: 'border-box' }}>
+                    {/* ── CUERPO: contenedor con gap vertical entre filas ── */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', background: LINE }}>
+                        {HORAS.map(hora => (
+                            <div key={hora} style={{
+                                display: 'grid',
+                                gridTemplateColumns: COL,
+                                columnGap: '1px',
+                                background: LINE,    /* muestra líneas verticales */
+                                height: 40,
+                            }}>
+                                {/* Celda hora */}
+                                <div style={{
+                                    background: isSelected('hour', null, hora) ? BG_SEL : BG_WHITE,
+                                    display: 'flex', alignItems: 'flex-start',
+                                    justifyContent: 'center', paddingTop: 4,
+                                    cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default',
+                                }}
+                                    onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('hour', null, hora); }}
+                                    {...getLongPressProps('hour', null, hora)}>
+                                    <span style={{ fontSize: 9, fontWeight: 700, color: '#2b47c9' }}>{hora}</span>
+                                </div>
+
+                                {/* Celdas de cada día */}
                                 {days.map((day, i) => {
                                     const overlappingCita = getCitaEnHora(day, hora)
-                                    const isStart = overlappingCita && overlappingCita.hora_inicio === hora
-                                    const isPast = isPastSlot(day, hora)
-                                    const isBookable = !overlappingCita && !isPast && isSlotBookable(day, hora)
-                                    const isMine = overlappingCita && !overlappingCita.isBlock && overlappingCita.cliente_id === user?.id
-                                    const isEditable = overlappingCita && (isAdmin || isMine) && !overlappingCita.isBlock
-                                    const isBlockItem = overlappingCita?.isBlock 
-                                    const isAdminBlock = false // Para forzar que isAdmin siempre pueda hacer click en bloqueos si quisieramos
-                                    const isSlotEmpty = !overlappingCita && !isPast
+                                    const isStart        = overlappingCita && overlappingCita.hora_inicio === hora
+                                    const isPast         = isPastSlot(day, hora)
+                                    const isBookable     = (!overlappingCita || (movingCita && overlappingCita?.id === movingCita.id)) && !isPast && isSlotBookable(day, hora, movingCita?.id)
+                                    const isMine         = overlappingCita && !overlappingCita.isBlock && overlappingCita.cliente_id === user?.id
+                                    const isEditable     = overlappingCita && (isAdmin || isMine) && !overlappingCita.isBlock
+                                    const isBlockItem    = overlappingCita?.isBlock
+                                    const isSlotEmpty    = !overlappingCita && !isPast
                                     const isNotEnoughTime = isSlotEmpty && !isBookable
-                                    const isSelectableForBlock = (isAdmin && isBlockMode && (!overlappingCita || isPast)) || (isSlotEmpty && !isBlockMode)
                                     const isSelectedSlot = isSelected('slot', day, hora)
+                                    const isSelectableForBlock = (isAdmin && isBlockMode && (!overlappingCita || isPast)) || (isSlotEmpty && !isBlockMode)
+                                    
+                                    // Visualización gris para pasado O bloqueos
+                                    const cellBg = isSelectedSlot ? BG_SEL : (isPast || isBlockItem) ? BG_PAST : BG_WHITE
+                                    const cursor = (isBookable && !isWithinLeadTime(day, hora, 'modificacion')) || isPast ? 'pointer' : (isAdmin && isBlockMode) ? 'pointer' : 'default'
 
                                     return (
                                         <div key={i}
                                             style={{
-                                                boxSizing: 'border-box',
                                                 position: 'relative',
-                                                borderLeft: i > 0 ? '1px solid #e2e6f0' : 'none',
-                                                background: isSelectedSlot ? '#fef9c3'
-                                                    : isPast && !overlappingCita ? '#f5f6fa'
-                                                    : '#ffffff',
-                                                cursor: isBookable ? 'pointer' : 'default',
+                                                background: cellBg,
+                                                cursor,
                                                 display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                overflow: 'visible',
                                             }}
                                             onClick={(e) => {
                                                 if (isAdmin && isBlockMode) {
                                                     if (!overlappingCita || isPast) toggleSelection('slot', day, hora)
                                                     return
                                                 }
-                                                handleSlotClick(e, day, hora, isBookable, isNotEnoughTime, isSelectableForBlock, isEditable, overlappingCita)
+                                                handleSlotClick(e, day, hora, isBookable, isNotEnoughTime, true, isEditable, overlappingCita, isPast)
                                             }}
-                                            {...(isSelectableForBlock || (isAdmin && isBlockMode && (!overlappingCita || isPast)) ? getLongPressProps('slot', day, hora) : {})}>
+                                            {...(isAdmin && isBlockMode ? getLongPressProps('slot', day, hora) : {})}>
 
                                             {isStart && !isBlockItem && (
                                                 <div
@@ -857,195 +966,202 @@ const SharedCalendar = ({ onNavigate }) => {
                                                         openEvent(overlappingCita)
                                                     }}
                                                     style={{
-                                                        position: 'absolute',
-                                                        top: 3, left: 2, right: 2,
-                                                        height: 'calc(200% - 7px)',
-                                                        borderRadius: 10,
-                                                        background: movingCita?.id === overlappingCita.id
-                                                            ? '#2b47c9'
-                                                            : overlappingCita.estado === 'cancelada'
-                                                                ? 'rgba(43,71,201,0.18)'
-                                                                : '#2b47c9',
+                                                        position: 'absolute', top: 2, left: 2, right: 2,
+                                                        height: `calc(${getEventSlots(overlappingCita) * 100}% - 4px)`, borderRadius: 8,
+                                                        background: overlappingCita.estado === 'cancelada' ? '#ef4444' : '#2b47c9',
                                                         border: movingCita?.id === overlappingCita.id
                                                             ? '2px solid #ff0055'
                                                             : overlappingCita.estado === 'cancelada'
-                                                                ? '1.5px dashed rgba(43,71,201,0.4)'
+                                                                ? '1.5px dashed #991b1b'
                                                                 : 'none',
-                                                        boxShadow: movingCita?.id === overlappingCita.id
-                                                            ? '0 0 15px rgba(255,0,85,0.4)'
-                                                            : '0 2px 6px rgba(43,71,201,0.3)',
-                                                        opacity: overlappingCita.estado === 'cancelada' ? 0.6 : 1,
-                                                        zIndex: 15,
-                                                        cursor: 'pointer',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        justifyContent: 'center',
+                                                        boxShadow: movingCita?.id === overlappingCita.id ? '0 0 10px rgba(255,0,85,0.4)' : '0 2px 4px rgba(43,71,201,0.2)',
+                                                        opacity: overlappingCita.estado === 'cancelada' ? 0.9 : 1,
+                                                        zIndex: 15, cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
                                                         ...getAppointmentLongPressProps(overlappingCita).style,
                                                     }}>
-                                                    {isAdmin && (
-                                                        <span style={{ fontSize: 8, fontWeight: 800, color: overlappingCita.estado === 'cancelada' ? 'rgba(43,71,201,0.7)' : '#fff', textAlign: 'center', padding: '0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                            {overlappingCita.estado === 'cancelada' ? '✗ ' : ''}{overlappingCita.usuarios?.nombre || 'Cliente'}
+                                                    {isAdmin ? (
+                                                        <span style={{ fontSize: 8, fontWeight: 800, color: '#fff', textAlign: 'center', padding: '0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                            {overlappingCita.usuarios?.nombre || '...'}
                                                         </span>
-                                                    )}
+                                                    ) : isMine ? (
+                                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }}>{overlappingCita.hora_inicio}</span>
+                                                            <span style={{ fontSize: 10, fontWeight: 900, color: '#fff', opacity: 0.8 }}>-</span>
+                                                            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }}>{overlappingCita.hora_fin}</span>
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                             )}
                                             {isStart && isBlockItem && isAdmin && (
                                                 <div
                                                     onClick={(e) => {
                                                         e.stopPropagation()
-                                                        if (longPressCitaFired.current) return
                                                         if (isBlockMode) { toggleSelection('slot', day, hora); return; }
-                                                        openEvent(overlappingCita) // abrimos evento y luego permitimos anular
+                                                        openEvent(overlappingCita)
                                                     }}
                                                     style={{
-                                                        position: 'absolute', top: 3, left: 2, right: 2,
-                                                        height: 'calc(200% - 7px)', borderRadius: 10,
-                                                        background: '#ef4444',
-                                                        zIndex: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                                        position: 'absolute', top: 2, left: 2, right: 2,
+                                                        height: `calc(${getEventSlots(overlappingCita) * 100}% - 4px)`, borderRadius: 8,
+                                                        background: '#e5e7eb', zIndex: 14, cursor: 'pointer',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center'
                                                     }}>
-                                                    <span style={{ fontSize: 8, fontWeight: 800, color: '#fff', textAlign: 'center' }}>
-                                                        BLOQUEO
-                                                    </span>
+                                                    <span style={{ fontSize: 8, fontWeight: 800, color: '#4b5563' }}>BLOQUEO</span>
                                                 </div>
                                             )}
                                         </div>
                                     )
                                 })}
                             </div>
-                        </div>
-                    ))}
+                        ))}
+                    </div>
+
                 </div>
             </div>
         )
     }
+    const renderDaily = () => {
+        // Usamos las constantes definidas al principio de SharedCalendar
 
-    const renderDaily = () => (
-        <div style={{ background: '#ffffff' }}>
-            {/* CABECERA DÍA */}
-            <div style={{ display: 'flex', borderBottom: '1px solid #e2e6f0', background: '#ffffff', boxSizing: 'border-box' }}>
-                <div style={{ boxSizing: 'border-box', width: 44, flexShrink: 0, padding: '10px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRight: '1px solid #e2e6f0' }}>
-                    <span style={{ fontSize: 9, fontWeight: 800, color: '#2b47c9', textTransform: 'uppercase' }}>HORA</span>
-                </div>
-                <div
-                    style={{ boxSizing: 'border-box', flex: 1, padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default' }}
-                    onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('day', currentDate, null); }}
-                    {...getLongPressProps('day', currentDate, null)}>
-                    <p style={{ fontSize: 13, fontWeight: 800, color: '#2b47c9', textTransform: 'uppercase', margin: 0 }}>
-                        {format(currentDate, 'EEEE d', { locale: es }).toUpperCase()}
-                    </p>
-                </div>
-            </div>
+        return (
+            <div style={{ width: '100%' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', background: LINE }}>
 
-            {/* CUERPO DEL CALENDARIO DIARIO */}
-            {HORAS.map(hora => {
-                const overlappingCita = getCitaEnHora(currentDate, hora)
-                const isStart = overlappingCita && overlappingCita.hora_inicio === hora
-                const isPast = isPastSlot(currentDate, hora)
-                const isMine = overlappingCita && !overlappingCita.isBlock && overlappingCita.cliente_id === user?.id
-                const isEditable = overlappingCita && (isAdmin || isMine) && !overlappingCita.isBlock
-                const isBlockItem = overlappingCita?.isBlock 
-                const isAdminBlock = false
-
-                return (
-                    <div key={hora} style={{ display: 'flex', borderBottom: '1px solid #e2e6f0', height: 40, boxSizing: 'border-box' }}>
-                        <div style={{
-                            boxSizing: 'border-box',
-                            width: 44, flexShrink: 0, display: 'flex', alignItems: 'flex-start',
-                            justifyContent: 'center', paddingTop: 4, borderRight: '1px solid #e2e6f0',
-                            background: isSelected('hour', null, hora) ? '#fef9c3' : '#ffffff',
-                            cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default',
-                        }}
-                            onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('hour', null, hora); }}
-                            {...getLongPressProps('hour', null, hora)}>
-                            <span style={{ fontSize: 9, fontWeight: 700, color: '#2b47c9' }}>{hora}</span>
+                    {/* ── CABECERA ── */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: '44px 1fr',
+                        columnGap: '1px',
+                        background: LINE,
+                        borderBottom: `2px solid ${LINE}`,
+                    }}>
+                        <div style={{ background: BG_WHITE, minHeight: 44 }} />
+                        <div
+                            style={{
+                                background: BG_WHITE,
+                                padding: '10px 16px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default',
+                            }}
+                            onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('day', currentDate, null); }}
+                            {...getLongPressProps('day', currentDate, null)}>
+                            <p style={{ fontSize: 13, fontWeight: 800, color: '#2b47c9', textTransform: 'uppercase', margin: 0 }}>
+                                {format(currentDate, 'EEEE d', { locale: es }).toUpperCase()}
+                            </p>
                         </div>
-                        <div style={{ flex: 1, position: 'relative', padding: 0, boxSizing: 'border-box' }}>
-                            {!overlappingCita || (!isEditable && !isBlockItem) ? (
-                                (() => {
-                                    const isBookable = !isPast && !overlappingCita && isSlotBookable(currentDate, hora)
-                                    const isSlotEmpty = !overlappingCita && !isPast;
-                                    const isNotEnoughTime = isSlotEmpty && !isBookable;
-                                    const isSelectableForBlock = (isAdmin && isBlockMode && (!overlappingCita || isPast)) || (isSlotEmpty && !isBlockMode);
+                    </div>
 
-                                    return (
-                                        <div onClick={(e) => {
-                                            if (isAdmin && isBlockMode) {
-                                                if (!overlappingCita || isPast) { toggleSelection('slot', currentDate, hora); }
-                                                return;
-                                            }
-                                            handleSlotClick(e, currentDate, hora, isBookable, isNotEnoughTime, isSelectableForBlock, isEditable, overlappingCita);
-                                        }}
+                    {/* ── CUERPO ── */}
+                    {HORAS.map(hora => {
+                        const overlappingCita = getCitaEnHora(currentDate, hora)
+                        const isStart         = overlappingCita && overlappingCita.hora_inicio === hora
+                        const isPast          = isPastSlot(currentDate, hora)
+                        const isMine          = overlappingCita && !overlappingCita.isBlock && overlappingCita.cliente_id === user?.id
+                        const isEditable      = overlappingCita && (isAdmin || isMine) && !overlappingCita.isBlock
+                        const isBlockItem     = overlappingCita?.isBlock
+                        const isBookable      = (!overlappingCita || (movingCita && overlappingCita?.id === movingCita.id)) && !isPast && isSlotBookable(currentDate, hora, movingCita?.id)
+                        const isSlotEmpty     = !overlappingCita && !isPast
+                        const isNotEnoughTime = isSlotEmpty && !isBookable
+                        const isSelectedSlot = isSelected('slot', currentDate, hora)
+                        const isSelectableForBlock = (isAdmin && isBlockMode && (!overlappingCita || isPast)) || (isSlotEmpty && !isBlockMode)
+                        
+                        // Visualización gris para pasado O bloqueos
+                        const slotBg = isSelectedSlot ? BG_SEL : (isPast || isBlockItem) ? BG_PAST : BG_WHITE
+                        const cursor = (isBookable && !isWithinLeadTime(currentDate, hora, 'modificacion')) || isPast ? 'pointer' : (isAdmin && isBlockMode) ? 'pointer' : 'default'
+
+                        return (
+                            <div key={hora} style={{
+                                display: 'grid',
+                                gridTemplateColumns: '44px 1fr',
+                                columnGap: '1px',
+                                background: LINE,
+                                height: 40,
+                            }}>
+                                {/* Celda hora */}
+                                <div style={{
+                                    background: isSelected('hour', null, hora) ? BG_SEL : BG_WHITE,
+                                    display: 'flex', alignItems: 'flex-start',
+                                    justifyContent: 'center', paddingTop: 4,
+                                    cursor: (isAdmin && isBlockMode) ? 'pointer' : 'default',
+                                }}
+                                    onClick={() => { if (longPressFired.current) { longPressFired.current = false; return; } if (isAdmin && isBlockMode) toggleSelection('hour', null, hora); }}
+                                    {...getLongPressProps('hour', null, hora)}>
+                                    <span style={{ fontSize: 9, fontWeight: 700, color: '#2b47c9' }}>{hora}</span>
+                                </div>
+
+                                {/* Celda contenido */}
+                                <div style={{ position: 'relative', background: slotBg, overflow: 'visible' }}>
+                                    {!overlappingCita || (!isEditable && !isBlockItem) ? (
+                                        <div
+                                            onClick={(e) => {
+                                                if (isAdmin && isBlockMode) {
+                                                    if (!overlappingCita || isPast) toggleSelection('slot', currentDate, hora);
+                                                    return;
+                                                }
+                                                handleSlotClick(e, currentDate, hora, isBookable, isNotEnoughTime, isSelectableForBlock, isEditable, overlappingCita, isPast);
+                                            }}
                                             {...(isSelectableForBlock || (isAdmin && isBlockMode && (!overlappingCita || isPast)) ? getLongPressProps('slot', currentDate, hora) : {})}
                                             style={{
-                                                width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                background: isSelected('slot', currentDate, hora) ? '#fef9c3'
-                                                    : isPast && !overlappingCita ? '#f5f6fa'
-                                                    : '#ffffff',
-                                                cursor: isBookable ? 'pointer' : 'default',
+                                                width: '100%', height: '100%',
+                                                cursor,
+                                            }}
+                                        />
+                                    ) : isStart && isEditable && (
+                                        <div
+                                            {...getAppointmentLongPressProps(overlappingCita)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (longPressCitaFired.current) { longPressCitaFired.current = false; e.preventDefault(); return; }
+                                                if (isAdmin && isBlockMode) { if (isPastSlot(currentDate, hora)) toggleSelection('slot', currentDate, hora); return; }
+                                                if (movingCita) { if (movingCita.id === overlappingCita.id) setMovingCita(null); return; }
+                                                openEvent(overlappingCita);
+                                            }}
+                                            style={{
+                                                position: 'absolute', top: 2, left: 4, right: 4,
+                                                height: `calc(${getEventSlots(overlappingCita) * 100}% - 4px)`, borderRadius: 8,
+                                                background: overlappingCita.estado === 'cancelada' ? '#ef4444' : '#2b47c9',
+                                                border: movingCita?.id === overlappingCita.id ? '2px solid #ff0055' : overlappingCita.estado === 'cancelada' ? '1.5px dashed #991b1b' : 'none',
+                                                boxShadow: movingCita?.id === overlappingCita.id ? '0 0 10px rgba(255,0,85,0.4)' : '0 2px 4px rgba(43,71,201,0.2)',
+                                                opacity: overlappingCita.estado === 'cancelada' ? 0.9 : 1,
+                                                zIndex: 15, cursor: 'pointer',
+                                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                                ...getAppointmentLongPressProps(overlappingCita).style,
                                             }}>
+                                            {isAdmin ? (
+                                                <span style={{ fontSize: 10, fontWeight: 800, color: '#fff' }}>{overlappingCita.usuarios?.nombre || '...'}</span>
+                                            ) : isMine ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', lineHeight: 1.2 }}>
+                                                    <span style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{overlappingCita.hora_inicio}</span>
+                                                    <span style={{ fontSize: 14, fontWeight: 900, color: '#fff', opacity: 0.8 }}>-</span>
+                                                    <span style={{ fontSize: 18, fontWeight: 900, color: '#fff' }}>{overlappingCita.hora_fin}</span>
+                                                </div>
+                                            ) : null}
                                         </div>
-                                    )
-                                })()
-                            ) : isStart && isEditable && !isAdminBlock && (
-                                <div
-                                    {...getAppointmentLongPressProps(overlappingCita)}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (longPressCitaFired.current) { longPressCitaFired.current = false; e.preventDefault(); return; }
-                                        if (isAdmin && isBlockMode) { if (isPastSlot(currentDate, hora)) toggleSelection('slot', currentDate, hora); return; }
-                                        if (movingCita) { if (movingCita.id === overlappingCita.id) setMovingCita(null); return; }
-                                        openEvent(overlappingCita);
-                                    }}
-                                    style={{
-                                        position: 'absolute',
-                                        top: 3, left: 4, right: 4,
-                                        height: 'calc(200% - 7px)',
-                                        borderRadius: 10,
-                                        background: movingCita?.id === overlappingCita.id ? '#2b47c9' : '#2b47c9',
-                                        border: movingCita?.id === overlappingCita.id ? '2px solid #ff0055' : 'none',
-                                        boxShadow: movingCita?.id === overlappingCita.id ? '0 0 15px rgba(255,0,85,0.4)' : '0 2px 6px rgba(43,71,201,0.3)',
-                                        zIndex: 15, cursor: 'pointer',
-                                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                                        ...getAppointmentLongPressProps(overlappingCita).style,
-                                    }}>
-                                    {isAdmin ? (
-                                        <span style={{ fontSize: 10, fontWeight: 800, color: '#fff' }}>
-                                            {overlappingCita.usuarios?.nombre || 'Cliente'}
-                                        </span>
-                                    ) : isMine ? (
-                                        <>
-                                            <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', lineHeight: 1 }}>{overlappingCita.hora_inicio}</span>
-                                            <span style={{ fontSize: 11, fontWeight: 800, color: '#fff', lineHeight: 1 }}>{overlappingCita.hora_fin}</span>
-                                        </>
-                                    ) : null}
+                                    )}
+                                    {isStart && isBlockItem && isAdmin && (
+                                        <div
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                if (isBlockMode) { toggleSelection('slot', currentDate, hora); return; }
+                                                openEvent(overlappingCita)
+                                            }}
+                                            style={{
+                                                position: 'absolute', top: 2, left: 4, right: 4,
+                                                height: `calc(${getEventSlots(overlappingCita) * 100}% - 4px)`, borderRadius: 8,
+                                                background: '#e5e7eb', zIndex: 14, cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            }}>
+                                            <span style={{ fontSize: 10, fontWeight: 800, color: '#4b5563' }}>BLOQUEO</span>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
-                            {isStart && isBlockItem && isAdmin && (
-                                <div
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        if (longPressCitaFired.current) return
-                                        if (isBlockMode) { toggleSelection('slot', currentDate, hora); return; }
-                                        openEvent(overlappingCita)
-                                    }}
-                                    style={{
-                                        position: 'absolute', top: 3, left: 4, right: 4,
-                                        height: 'calc(200% - 7px)', borderRadius: 10,
-                                        background: '#ef4444',
-                                        zIndex: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                                    }}>
-                                    <span style={{ fontSize: 10, fontWeight: 800, color: '#fff' }}>
-                                        BLOQUEO
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    </div >
-                )
-            })}
-        </div >
-    )
-
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+        )
+    }
 
 
 
@@ -1469,12 +1585,7 @@ const SharedCalendar = ({ onNavigate }) => {
                                 <label className="block text-[10px] font-black text-[#6b7a99] uppercase tracking-widest mb-2">Nueva Hora</label>
                                 <div className="grid grid-cols-3 gap-2">
                                     {HORAS.map(h => {
-                                        const isOccupied = [...sesiones, ...bloqueos].some(c =>
-                                            c.id !== selectedEvent.id &&
-                                            format(c.fecha, 'yyyy-MM-dd') === modFecha &&
-                                            c.hora_inicio === h && 
-                                            c.tipo !== 'dia_completo'
-                                        ) || bloqueos.some(b => isSameDay(b.fecha, modFecha) && b.tipo === 'dia_completo')
+                                        const isOccupied = !isSlotBookable(new Date(modFecha), h, selectedEvent.id)
                                         return (
                                             <button
                                                 key={h}

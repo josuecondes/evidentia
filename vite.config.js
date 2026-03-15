@@ -13,8 +13,8 @@ export default defineConfig({
       injectRegister: 'auto',
       includeAssets: ['evidentia_logo.png', 'evidentia-logo.png'],
       manifest: {
-        name: 'Evidentia',
-        short_name: 'Evidentia',
+        name: 'Força',
+        short_name: 'Força',
         description: 'Plataforma premium de entrenamiento y salud',
         theme_color: '#111318',
         background_color: '#0f1210',

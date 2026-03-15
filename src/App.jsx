@@ -10,12 +10,14 @@ const ProtectedRoute = ({ children, allowedRole }) => {
   const { user, profile, loading, signOut } = useAuth()
 
   if (loading) {
-    return <div className="flex h-[100dvh] items-center justify-center font-sans bg-[#0f1210] text-[#22c55e]">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-12 h-12 border-4 border-[#22c55e]/30 border-t-[#22c55e] rounded-full animate-spin" />
-        <p className="text-sm font-bold tracking-widest uppercase animate-pulse">Verificando acceso...</p>
+    return (
+      <div className="flex h-[100dvh] items-center justify-center font-sans bg-[#eef0f5]">
+        <div className="flex flex-col items-center gap-5">
+          <div className="w-10 h-10 rounded-full border-[3px] border-[#2b47c9]/20 border-t-[#2b47c9] animate-spin" />
+          <p className="text-xs font-black tracking-[0.25em] uppercase text-[#2b47c9]">Verificando acceso</p>
+        </div>
       </div>
-    </div>
+    )
   }
 
   if (!user) return <Navigate to="/login" />
