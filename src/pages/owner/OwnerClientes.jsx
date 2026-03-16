@@ -4,143 +4,170 @@ import { useAuth } from '../../context/AuthContext'
 import { logRegistro } from '../../utils/registro'
 import {
     Search, Plus, Archive, Trash2, MoreVertical, X,
-    ChevronLeft, Edit2, Check, Loader2,
-    User2, Calendar, DollarSign, Clock, Eye, EyeOff
+    ChevronLeft, ChevronRight, Edit2, Check, Loader2,
+    User2, Phone, Mail, Calendar, DollarSign, Clock,
+    Eye, EyeOff
 } from 'lucide-react'
 
 const DIAS = ['lun', 'mar', 'mie', 'jue', 'vie', 'sab']
 const DIAS_LABEL = { lun: 'Lunes', mar: 'Martes', mie: 'Miércoles', jue: 'Jueves', vie: 'Viernes', sab: 'Sábado' }
-const HORAS = []; for (let h = 9; h <= 20; h++) HORAS.push(`${String(h).padStart(2, '0')}:00`)
+const HORAS = []
+for (let h = 9; h <= 20; h++) HORAS.push(`${String(h).padStart(2, '0')}:00`)
 
 function cn(...c) { return c.filter(Boolean).join(' ') }
 
-const T = {
-    page: '#eaecf1',
-    card: 'linear-gradient(145deg,#f6f8fc 0%,#eef1f6 100%)',
-    cardBorder: '1.5px solid rgba(0,0,0,0.09)',
-    cardShadow: '0 2px 14px rgba(0,0,0,0.07)',
-    inp: { background: '#e9ecf3', border: '1px solid rgba(0,0,0,0.12)', borderRadius: '14px', padding: '13px 16px', color: '#0d1117', fontSize: '14px', outline: 'none', width: '100%' },
-    blue: '#2563eb', blueBg: 'rgba(37,99,235,0.09)', blueBorder: 'rgba(37,99,235,0.28)',
-    green: '#16a34a', greenBg: 'rgba(22,163,74,0.09)', greenBorder: 'rgba(22,163,74,0.28)',
-    red: '#dc2626', redBg: 'rgba(220,38,38,0.09)',
-    amber: '#d97706', amberBg: 'rgba(217,119,6,0.09)',
-    p1: '#0d1117', p2: '#5a6278', p3: '#8890a4',
-}
-const lbl = { fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.12em', color: T.p3, display: 'block', marginBottom: '6px' }
-
-// Primary button style
-const btnPrimary = {
-    background: 'linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%)',
-    color: '#fff',
-    border: '1px solid rgba(37,99,235,0.4)',
-    boxShadow: '0 4px 14px rgba(37,99,235,0.28)'
-}
-
-// ── Modal Crear Cliente ────────────────────────────────────────────────────────
-const ModalCrearCliente = ({ onClose, onCreated }) => {
+// ─── MODAL CREAR CLIENTE ──────────────────────────────────────────────────────
+const ModalCrearCliente = ({ onClose, onCreated, moduloOrigen = 'clientes' }) => {
     const { user } = useAuth()
-    const [form, setForm] = useState({ nombre: '', email: '', password: '', sesiones_semanales: 1, distribucion_semanal: ['lun'], hora_habitual: '10:00', precio_por_sesion: 0, fecha_inicio: '' })
-    const [showPwd, setShowPwd] = useState(false)
+    const [form, setForm] = useState({
+        nombre: '', email: '', password: '',
+        sesiones_semanales: 1,
+        distribucion_semanal: ['lun'],
+        hora_habitual: '10:00',
+        precio_por_sesion: 0,
+        fecha_inicio: '',
+    })
+    const [showPassword, setShowPassword] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
 
-    const toggleDia = d => setForm(f => ({
-        ...f,
-        distribucion_semanal: f.distribucion_semanal.includes(d)
-            ? f.distribucion_semanal.filter(x => x !== d)
-            : [...f.distribucion_semanal, d]
-    }))
+    const toggleDia = (d) => {
+        setForm(f => ({
+            ...f,
+            distribucion_semanal: f.distribucion_semanal.includes(d)
+                ? f.distribucion_semanal.filter(x => x !== d)
+                : [...f.distribucion_semanal, d]
+        }))
+    }
 
     const handleSubmit = async () => {
         if (!form.nombre.trim()) { setError('El nombre es obligatorio'); return }
         if (!form.email.trim()) { setError('El email es obligatorio'); return }
-        if (!form.password || form.password.length < 6) { setError('Contraseña: mínimo 6 caracteres'); return }
+        if (!form.password || form.password.length < 6) { setError('La contraseña debe tener al menos 6 caracteres'); return }
         if (form.distribucion_semanal.length === 0) { setError('Selecciona al menos un día'); return }
-        setLoading(true); setError('')
+        setLoading(true)
+        setError('')
         try {
+            // 1. Crear usuario en Supabase Auth.
+            //    Todos los datos de estructura van en el metadata para que el trigger
+            //    on_auth_user_created (SECURITY DEFINER) cree clientes_estructura de forma
+            //    atómica, sin que el frontend tenga que hacer un INSERT posterior que
+            //    fallaría por RLS al cambiar la sesión al nuevo usuario.
             const { data: authData, error: authErr } = await supabase.auth.signUp({
-                email: form.email.trim(), password: form.password,
-                options: { data: { full_name: form.nombre.trim(), sesiones_semanales: form.sesiones_semanales, distribucion_semanal: form.distribucion_semanal, hora_habitual: form.hora_habitual, precio_por_sesion: parseFloat(form.precio_por_sesion) || 0, fecha_inicio: form.fecha_inicio || '' } }
+                email: form.email.trim(),
+                password: form.password,
+                options: {
+                    data: {
+                        full_name: form.nombre.trim(),
+                        sesiones_semanales: form.sesiones_semanales,
+                        distribucion_semanal: form.distribucion_semanal,
+                        hora_habitual: form.hora_habitual,
+                        precio_por_sesion: parseFloat(form.precio_por_sesion) || 0,
+                        fecha_inicio: form.fecha_inicio || '',
+                    }
+                }
             })
             if (authErr) throw authErr
-            const uid = authData.user?.id
-            if (!uid) throw new Error('No se pudo obtener el ID del nuevo usuario')
+            const nuevoUsuarioId = authData.user?.id
+            if (!nuevoUsuarioId) throw new Error('No se pudo obtener el ID del nuevo usuario')
+
+            // 2. Esperar a que el trigger de BD propague clientes_estructura (máx. 3 s).
+            //    El trigger corre en el servidor (SECURITY DEFINER) y tiene permisos
+            //    para escribir aunque la sesión del admin haya cambiado momentáneamente.
             let intentos = 0
             while (intentos < 10) {
                 await new Promise(r => setTimeout(r, 300))
-                const { data: est } = await supabase.from('clientes_estructura').select('usuario_id').eq('usuario_id', uid).maybeSingle()
+                const { data: est } = await supabase
+                    .from('clientes_estructura')
+                    .select('usuario_id')
+                    .eq('usuario_id', nuevoUsuarioId)
+                    .maybeSingle()
                 if (est) break
                 intentos++
             }
-            await logRegistro({ accion: 'crear_cliente', entidad: 'cliente', entidad_id: uid, modulo_origen: 'clientes', cliente_id: uid, valor_nuevo: { nombre: form.nombre, email: form.email }, autor_id: user?.id })
-            onCreated({ id: uid, nombre: form.nombre.trim(), email: form.email.trim() })
+
+            // 3. Registro de actividad
+            await logRegistro({
+                accion: 'crear_cliente',
+                entidad: 'cliente',
+                entidad_id: nuevoUsuarioId,
+                modulo_origen: moduloOrigen,
+                cliente_id: nuevoUsuarioId,
+                valor_nuevo: { nombre: form.nombre, email: form.email },
+                autor_id: user?.id,
+            })
+
+            onCreated({ id: nuevoUsuarioId, nombre: form.nombre.trim(), email: form.email.trim() })
             onClose()
-        } catch (e) { setError(e.message) }
-        finally { setLoading(false) }
+        } catch (e) {
+            setError(e.message)
+        } finally {
+            setLoading(false)
+        }
     }
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-end sm:items-center justify-center p-0 sm:p-6"
-            style={{ background: 'rgba(13,17,32,0.6)', backdropFilter: 'blur(8px)' }}>
-            <div className="w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[90dvh] overflow-y-auto" style={{
-                background: 'linear-gradient(160deg,#f6f8fc 0%,#eef1f6 100%)',
-                border: '1.5px solid rgba(0,0,0,0.1)',
-                boxShadow: '0 24px 80px rgba(0,0,0,0.22)'
-            }}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-end sm:items-center justify-center p-0 sm:p-6">
+            <div className="bg-[#111318] border border-white/10 w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 max-h-[90dvh] overflow-y-auto" style={{ boxShadow: '0 0 60px rgba(0,0,0,0.9)' }}>
                 <div className="flex items-center justify-between mb-6">
-                    <div>
-                        <h3 className="text-lg font-black tracking-tight" style={{ color: T.p1 }}>Nuevo Cliente</h3>
-                        <p className="text-xs mt-0.5 font-medium" style={{ color: T.p3 }}>Crear acceso y estructura</p>
-                    </div>
-                    <button onClick={onClose} className="p-3 rounded-xl transition-all" style={{ background: '#e9ecf3', border: '1px solid rgba(0,0,0,0.1)' }}>
-                        <X className="w-4 h-4" style={{ color: T.p2 }} />
-                    </button>
+                    <h3 className="text-lg font-black text-white">Nuevo Cliente</h3>
+                    <button onClick={onClose} className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition-colors"><X className="w-5 h-5 text-white/50" /></button>
                 </div>
 
-                {error && (
-                    <div className="mb-4 px-4 py-3 rounded-xl text-sm font-bold" style={{ background: T.redBg, border: '1px solid rgba(220,38,38,0.2)', color: T.red }}>
-                        {error}
-                    </div>
-                )}
+                {error && <p className="text-red-400 text-xs mb-4 bg-red-500/10 px-3 py-2 rounded-xl">{error}</p>}
 
                 <div className="space-y-4">
                     <div>
-                        <label style={lbl}>Nombre *</label>
-                        <input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} style={T.inp} placeholder="Nombre completo" />
+                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Nombre *</label>
+                        <input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
+                            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" placeholder="Nombre completo" />
                     </div>
                     <div>
-                        <label style={lbl}>Email *</label>
-                        <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={T.inp} placeholder="email@ejemplo.com" />
+                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Email *</label>
+                        <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" placeholder="email@ejemplo.com" />
                     </div>
                     <div>
-                        <label style={lbl}>Contraseña *</label>
+                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Contraseña *</label>
                         <div className="relative">
-                            <input type={showPwd ? 'text' : 'password'} value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={{ ...T.inp, paddingRight: '48px' }} placeholder="Mínimo 6 caracteres" />
-                            <button type="button" onClick={() => setShowPwd(v => !v)} className="absolute right-4 top-1/2 -translate-y-1/2" style={{ color: T.p3 }}>
-                                {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={form.password}
+                                onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 pr-11 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors"
+                                placeholder="Mínimo 6 caracteres"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(v => !v)}
+                                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-white/30 hover:text-white/60 transition-colors"
+                            >
+                                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                             </button>
                         </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label style={lbl}>Sesiones/semana</label>
-                            <input type="number" min="1" max="7" value={form.sesiones_semanales} onChange={e => setForm(f => ({ ...f, sesiones_semanales: parseInt(e.target.value) || 1 }))} style={T.inp} />
+                            <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Sesiones/semana</label>
+                            <input type="number" min="1" max="7" value={form.sesiones_semanales} onChange={e => setForm(f => ({ ...f, sesiones_semanales: parseInt(e.target.value) || 1 }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" />
                         </div>
                         <div>
-                            <label style={lbl}>Precio/sesión (€)</label>
-                            <input type="number" min="0" step="0.01" value={form.precio_por_sesion} onChange={e => setForm(f => ({ ...f, precio_por_sesion: e.target.value }))} style={T.inp} />
+                            <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Precio/sesión (€)</label>
+                            <input type="number" min="0" step="0.01" value={form.precio_por_sesion} onChange={e => setForm(f => ({ ...f, precio_por_sesion: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" />
                         </div>
                     </div>
                     <div>
-                        <label style={lbl}>Días habituales</label>
-                        <div className="flex gap-2">
+                        <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-2 block">Días habituales</label>
+                        <div className="flex gap-2 flex-wrap">
                             {DIAS.map(d => (
                                 <button key={d} onClick={() => toggleDia(d)}
-                                    className="flex-1 h-11 rounded-xl text-xs font-black uppercase transition-all active:scale-95"
-                                    style={form.distribucion_semanal.includes(d) ? {
-                                        background: 'linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%)',
-                                        color: '#fff', border: '1px solid rgba(37,99,235,0.4)', boxShadow: '0 2px 10px rgba(37,99,235,0.22)'
-                                    } : { background: '#e9ecf3', color: T.p2, border: '1px solid rgba(0,0,0,0.1)' }}>
+                                    className={cn('px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all border',
+                                        form.distribucion_semanal.includes(d)
+                                            ? 'bg-[#22c55e]/20 text-[#22c55e] border-[#22c55e]/40'
+                                            : 'bg-white/5 text-white/40 border-white/10 hover:border-white/20'
+                                    )}>
                                     {d}
                                 </button>
                             ))}
@@ -148,26 +175,27 @@ const ModalCrearCliente = ({ onClose, onCreated }) => {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label style={lbl}>Hora habitual</label>
-                            <select value={form.hora_habitual} onChange={e => setForm(f => ({ ...f, hora_habitual: e.target.value }))} style={T.inp}>
-                                {HORAS.map(h => <option key={h} value={h}>{h}</option>)}
+                            <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Hora habitual</label>
+                            <select value={form.hora_habitual} onChange={e => setForm(f => ({ ...f, hora_habitual: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors">
+                                {HORAS.map(h => <option key={h} value={h} className="bg-[#111318]">{h}</option>)}
                             </select>
                         </div>
                         <div>
-                            <label style={lbl}>Fecha inicio</label>
-                            <input type="date" value={form.fecha_inicio} onChange={e => setForm(f => ({ ...f, fecha_inicio: e.target.value }))} style={T.inp} />
+                            <label className="text-xs text-white/50 font-bold uppercase tracking-widest mb-1 block">Fecha inicio</label>
+                            <input type="date" value={form.fecha_inicio} onChange={e => setForm(f => ({ ...f, fecha_inicio: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/50 transition-colors" />
                         </div>
                     </div>
                 </div>
 
                 <div className="flex gap-3 mt-6">
                     <button onClick={handleSubmit} disabled={loading}
-                        className="flex-1 py-4 rounded-2xl font-black text-base flex items-center justify-center gap-2 transition-all disabled:opacity-40 active:scale-95"
-                        style={btnPrimary}>
-                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Crear cliente
+                        className="flex-1 py-4 bg-[#22c55e]/20 text-[#22c55e] rounded-2xl font-black text-sm border border-[#22c55e]/30 hover:bg-[#22c55e]/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                        Crear cliente
                     </button>
-                    <button onClick={onClose} className="px-6 py-4 rounded-2xl font-black text-sm"
-                        style={{ background: '#e9ecf3', color: T.p2, border: '1px solid rgba(0,0,0,0.1)' }}>
+                    <button onClick={onClose} className="px-6 py-4 bg-white/5 text-white/50 rounded-2xl font-black text-sm hover:bg-white/10 transition-colors">
                         Cancelar
                     </button>
                 </div>
@@ -176,37 +204,7 @@ const ModalCrearCliente = ({ onClose, onCreated }) => {
     )
 }
 
-// ── Modal Confirmación ─────────────────────────────────────────────────────────
-const ConfirmModal = ({ title, message, confirmLabel, confirmColor, onConfirm, onClose, danger }) => (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center p-6" style={{ background: 'rgba(13,17,32,0.6)', backdropFilter: 'blur(8px)' }}>
-        <div className="w-full max-w-xs rounded-3xl p-8 text-center" style={{
-            background: 'linear-gradient(160deg,#f6f8fc 0%,#eef1f6 100%)',
-            border: '1.5px solid rgba(0,0,0,0.1)',
-            boxShadow: '0 24px 80px rgba(0,0,0,0.22)'
-        }}>
-            {danger && (
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: T.redBg, border: '1px solid rgba(220,38,38,0.2)' }}>
-                    <Trash2 className="w-6 h-6" style={{ color: T.red }} />
-                </div>
-            )}
-            <h3 className="text-base font-black tracking-tight mb-2" style={{ color: T.p1 }}>{title}</h3>
-            <p className="text-sm mb-6 font-medium" style={{ color: T.p3 }}>{message}</p>
-            <div className="flex gap-3">
-                <button onClick={onConfirm}
-                    className="flex-1 py-3.5 rounded-2xl font-black text-sm transition-all active:scale-95"
-                    style={{ background: `${confirmColor}12`, color: confirmColor, border: `1px solid ${confirmColor}28` }}>
-                    {confirmLabel}
-                </button>
-                <button onClick={onClose} className="flex-1 py-3.5 rounded-2xl font-bold text-sm"
-                    style={{ background: '#e9ecf3', color: T.p2, border: '1px solid rgba(0,0,0,0.1)' }}>
-                    Cancelar
-                </button>
-            </div>
-        </div>
-    </div>
-)
-
-// ── Ficha Cliente ──────────────────────────────────────────────────────────────
+// ─── FICHA CLIENTE ─────────────────────────────────────────────────────────────
 const FichaCliente = ({ clienteId, onBack }) => {
     const { user } = useAuth()
     const [cliente, setCliente] = useState(null)
@@ -219,6 +217,7 @@ const FichaCliente = ({ clienteId, onBack }) => {
     const [menuOpen, setMenuOpen] = useState(false)
     const [confirmDelete, setConfirmDelete] = useState(false)
     const [confirmArchive, setConfirmArchive] = useState(false)
+    const [confirmOverwrite, setConfirmOverwrite] = useState(false)
 
     useEffect(() => {
         const load = async () => {
@@ -228,8 +227,16 @@ const FichaCliente = ({ clienteId, onBack }) => {
                 supabase.from('clientes_estructura').select('*').eq('usuario_id', clienteId).single(),
                 supabase.from('sesiones').select('*').eq('cliente_id', clienteId).order('fecha', { ascending: false }).limit(20)
             ])
-            setCliente(cli); setEstructura(est); setSesiones(ses || [])
-            if (est) setEditForm({ sesiones_semanales: est.sesiones_semanales, distribucion_semanal: [...(est.distribucion_semanal || [])], hora_habitual: est.hora_habitual, precio_por_sesion: est.precio_por_sesion, notas: est.notas || '' })
+            setCliente(cli)
+            setEstructura(est)
+            setSesiones(ses || [])
+            if (est) setEditForm({
+                sesiones_semanales: est.sesiones_semanales,
+                distribucion_semanal: [...(est.distribucion_semanal || [])],
+                hora_habitual: est.hora_habitual,
+                precio_por_sesion: est.precio_por_sesion,
+                notas: est.notas || ''
+            })
             setLoading(false)
         }
         load()
@@ -238,215 +245,250 @@ const FichaCliente = ({ clienteId, onBack }) => {
     const handleSave = async () => {
         setSaveLoading(true)
         try {
-            const { error } = await supabase.from('clientes_estructura').update({ ...editForm, updated_at: new Date().toISOString() }).eq('usuario_id', clienteId)
+            const { error } = await supabase.from('clientes_estructura')
+                .update({ ...editForm, updated_at: new Date().toISOString() })
+                .eq('usuario_id', clienteId)
             if (error) throw error
-            await logRegistro({ accion: 'editar_estructura_cliente', entidad: 'cliente', entidad_id: clienteId, modulo_origen: 'clientes', cliente_id: clienteId, valor_anterior: estructura, valor_nuevo: editForm, autor_id: user?.id })
-            setEstructura(p => ({ ...p, ...editForm })); setEditMode(false)
+            await logRegistro({
+                accion: 'editar_estructura_cliente', entidad: 'cliente', entidad_id: clienteId,
+                modulo_origen: 'clientes', cliente_id: clienteId,
+                valor_anterior: estructura, valor_nuevo: editForm, autor_id: user?.id
+            })
+            setEstructura(prev => ({ ...prev, ...editForm }))
+            setEditMode(false)
         } catch (e) { alert(e.message) }
         finally { setSaveLoading(false) }
     }
+
     const handleArchive = async () => {
         await supabase.from('clientes_estructura').update({ estado: 'archivado' }).eq('usuario_id', clienteId)
         await logRegistro({ accion: 'archivar_cliente', entidad: 'cliente', entidad_id: clienteId, modulo_origen: 'clientes', cliente_id: clienteId, valor_anterior: { estado: 'activo' }, valor_nuevo: { estado: 'archivado' }, autor_id: user?.id })
-        setConfirmArchive(false); onBack()
+        setConfirmArchive(false)
+        onBack()
     }
+
     const handleDelete = async () => {
         await supabase.from('usuarios').delete().eq('id', clienteId)
         await logRegistro({ accion: 'eliminar_cliente', entidad: 'cliente', entidad_id: clienteId, modulo_origen: 'clientes', cliente_id: clienteId, autor_id: user?.id })
-        setConfirmDelete(false); onBack()
+        setConfirmDelete(false)
+        onBack()
     }
-    const toggleDia = d => setEditForm(f => ({
+
+    const toggleDia = (d) => setEditForm(f => ({
         ...f,
-        distribucion_semanal: f.distribucion_semanal?.includes(d) ? f.distribucion_semanal.filter(x => x !== d) : [...(f.distribucion_semanal || []), d]
+        distribucion_semanal: f.distribucion_semanal?.includes(d)
+            ? f.distribucion_semanal.filter(x => x !== d)
+            : [...(f.distribucion_semanal || []), d]
     }))
 
     const realizadas = sesiones.filter(s => s.estado === 'realizada').length
     const pendientesPago = sesiones.filter(s => s.pago_estado === 'pendiente' && s.estado === 'realizada').length
-    const totalPendiente = sesiones.filter(s => s.pago_estado === 'pendiente' && s.estado === 'realizada').reduce((acc, s) => acc + (parseFloat(s.importe) || parseFloat(estructura?.precio_por_sesion) || 0), 0)
+    const totalPendiente = sesiones.filter(s => s.pago_estado === 'pendiente' && s.estado === 'realizada')
+        .reduce((acc, s) => acc + (parseFloat(s.importe) || parseFloat(estructura?.precio_por_sesion) || 0), 0)
 
     if (loading) return (
-        <div className="flex items-center justify-center py-20" style={{ background: T.page }}>
-            <Loader2 className="w-8 h-8 animate-spin" style={{ color: T.blue }} />
-        </div>
+        <div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 text-[#22c55e] animate-spin" /></div>
     )
 
     return (
-        <div className="pb-10 min-h-full" style={{ background: T.page }}>
-            {/* Hero header */}
-            <div className="px-4 pt-4 pb-5" style={{ background: 'linear-gradient(180deg,#f6f8fc 0%,#eaecf1 100%)', borderBottom: '1px solid rgba(0,0,0,0.08)' }}>
-                <div className="flex items-center justify-between mb-5">
-                    <button onClick={onBack}
-                        className="p-3 rounded-2xl transition-all active:scale-95"
-                        style={{ background: '#e9ecf3', border: '1px solid rgba(0,0,0,0.1)', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                        <ChevronLeft className="w-5 h-5" style={{ color: T.p2 }} />
-                    </button>
-                    <div className="flex items-center gap-2">
-                        {!editMode ? (
-                            <>
-                                <button onClick={() => setEditMode(true)}
-                                    className="px-5 py-2.5 rounded-xl font-black text-sm transition-all active:scale-95"
-                                    style={btnPrimary}>
-                                    Editar
-                                </button>
-                                <button onClick={() => setConfirmArchive(true)}
-                                    className="px-5 py-2.5 rounded-xl font-black text-sm transition-all"
-                                    style={{ background: '#e9ecf3', color: T.p2, border: '1px solid rgba(0,0,0,0.1)' }}>
-                                    Archivar
-                                </button>
-                                <div className="relative">
-                                    <button onClick={() => setMenuOpen(!menuOpen)}
-                                        className="p-2.5 rounded-xl" style={{ background: '#e9ecf3', border: '1px solid rgba(0,0,0,0.1)' }}>
-                                        <MoreVertical className="w-4 h-4" style={{ color: T.p2 }} />
-                                    </button>
-                                    {menuOpen && (
-                                        <div className="absolute right-0 top-full mt-1 w-52 z-50 rounded-2xl overflow-hidden" style={{ background: '#f6f8fc', border: '1.5px solid rgba(0,0,0,0.1)', boxShadow: '0 16px 48px rgba(0,0,0,0.16)' }}>
-                                            <button onClick={() => { setConfirmDelete(true); setMenuOpen(false) }}
-                                                className="w-full flex items-center gap-3 px-4 py-4 text-sm font-bold transition-colors hover:bg-red-50"
-                                                style={{ color: T.red }}>
-                                                <Trash2 className="w-4 h-4" /> Eliminar cliente
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            </>
-                        ) : (
-                            <>
-                                <button onClick={handleSave} disabled={saveLoading}
-                                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-black text-sm transition-all disabled:opacity-40 active:scale-95"
-                                    style={btnPrimary}>
-                                    {saveLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Guardar
-                                </button>
-                                <button onClick={() => setEditMode(false)} className="px-5 py-2.5 rounded-xl font-bold text-sm"
-                                    style={{ background: '#e9ecf3', color: T.p2, border: '1px solid rgba(0,0,0,0.1)' }}>
-                                    Cancelar
-                                </button>
-                            </>
-                        )}
-                    </div>
+        <div className="p-4 pb-8 relative">
+            {/* Header */}
+            <div className="flex items-center gap-3 mb-6">
+                <button onClick={onBack} className="p-2 bg-white/5 rounded-2xl hover:bg-white/10 transition-colors">
+                    <ChevronLeft className="w-5 h-5 text-white/60" />
+                </button>
+                <div className="flex-1">
+                    <h2 className="text-xl font-black text-white">{cliente?.nombre}</h2>
+                    <p className="text-white/40 text-xs">{cliente?.email}</p>
                 </div>
-
-                <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center font-black text-2xl shrink-0" style={{
-                        background: 'linear-gradient(145deg,#2563eb 0%,#1d4ed8 100%)',
-                        color: '#fff',
-                        boxShadow: '0 8px 24px rgba(37,99,235,0.3)'
-                    }}>
-                        {cliente?.nombre?.charAt(0)?.toUpperCase() || '?'}
-                    </div>
-                    <div>
-                        <h2 className="text-xl font-black tracking-tight" style={{ color: T.p1 }}>{cliente?.nombre}</h2>
-                        <p className="text-sm mt-0.5 font-medium" style={{ color: T.p3 }}>{cliente?.email}</p>
-                    </div>
-                </div>
-            </div>
-
-            {/* Metrics */}
-            <div className="grid grid-cols-3 gap-3 px-4 py-4">
-                {[{ label: 'Realizadas', value: realizadas, color: T.blue }, { label: 'Pend. pago', value: pendientesPago, color: T.amber }, { label: 'Total pend.', value: `${totalPendiente.toFixed(0)}€`, color: T.red }].map(m => (
-                    <div key={m.label} className="rounded-2xl p-3 text-center" style={{ background: T.card, border: T.cardBorder, boxShadow: T.cardShadow }}>
-                        <p className="text-xl font-black tracking-tight" style={{ color: m.color }}>{m.value}</p>
-                        <p className="text-[9px] font-black uppercase tracking-wider mt-0.5" style={{ color: T.p3 }}>{m.label}</p>
-                    </div>
-                ))}
-            </div>
-
-            {/* Structure */}
-            <div className="mx-4 mb-4 rounded-2xl overflow-hidden" style={{ background: T.card, border: T.cardBorder, boxShadow: T.cardShadow }}>
-                <div className="px-5 py-4" style={{ borderBottom: '1px solid rgba(0,0,0,0.07)' }}>
-                    <h3 className="text-xs font-black uppercase tracking-widest" style={{ color: T.p3 }}>Estructura base</h3>
-                </div>
-                <div className="p-5">
+                <div className="flex gap-2">
                     {!editMode ? (
-                        <div className="space-y-3">
-                            <Row icon={<Calendar className="w-4 h-4" />} label="Ses/semana" value={estructura?.sesiones_semanales} />
-                            <Row icon={<Clock className="w-4 h-4" />} label="Días" value={(estructura?.distribucion_semanal || []).map(d => DIAS_LABEL[d] || d).join(', ')} />
-                            <Row icon={<Clock className="w-4 h-4" />} label="Hora habitual" value={estructura?.hora_habitual} />
-                            <Row icon={<DollarSign className="w-4 h-4" />} label="Precio/sesión" value={`${estructura?.precio_por_sesion}€`} />
-                            {estructura?.notas && <Row icon={<Edit2 className="w-4 h-4" />} label="Notas" value={estructura.notas} />}
-                        </div>
-                    ) : (
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label style={lbl}>Sesiones/semana</label>
-                                    <input type="number" min="1" max="7" value={editForm.sesiones_semanales} onChange={e => setEditForm(f => ({ ...f, sesiones_semanales: parseInt(e.target.value) || 1 }))} style={T.inp} />
-                                </div>
-                                <div>
-                                    <label style={lbl}>Precio/sesión (€)</label>
-                                    <input type="number" min="0" step="0.01" value={editForm.precio_por_sesion} onChange={e => setEditForm(f => ({ ...f, precio_por_sesion: e.target.value }))} style={T.inp} />
-                                </div>
-                            </div>
-                            <div>
-                                <label style={lbl}>Días habituales</label>
-                                <div className="flex gap-2">
-                                    {DIAS.map(d => (
-                                        <button key={d} onClick={() => toggleDia(d)}
-                                            className="flex-1 h-11 rounded-xl text-xs font-black uppercase transition-all active:scale-95"
-                                            style={editForm.distribucion_semanal?.includes(d) ? {
-                                                background: 'linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%)',
-                                                color: '#fff', border: '1px solid rgba(37,99,235,0.4)', boxShadow: '0 2px 10px rgba(37,99,235,0.22)'
-                                            } : { background: '#e9ecf3', color: T.p2, border: '1px solid rgba(0,0,0,0.1)' }}>
-                                            {d}
+                        <>
+                            <button onClick={() => setEditMode(true)}
+                                className="px-4 py-2 bg-[#22c55e]/15 text-[#22c55e] rounded-2xl font-bold text-sm border border-[#22c55e]/30 hover:bg-[#22c55e]/25 transition-colors">
+                                Editar
+                            </button>
+                            <button onClick={() => setConfirmArchive(true)}
+                                className="px-4 py-2 bg-white/5 text-white/50 rounded-2xl font-bold text-sm border border-white/10 hover:bg-white/10 transition-colors">
+                                Archivar
+                            </button>
+                            <div className="relative">
+                                <button onClick={() => setMenuOpen(!menuOpen)} className="p-2 bg-white/5 rounded-2xl hover:bg-white/10 transition-colors"><MoreVertical className="w-5 h-5 text-white/50" /></button>
+                                {menuOpen && (
+                                    <div className="absolute right-0 top-full mt-1 w-52 bg-[#1a1d24] border border-white/10 rounded-2xl overflow-hidden z-50 shadow-2xl">
+                                        <button onClick={() => { setConfirmOverwrite(true); setMenuOpen(false) }}
+                                            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:bg-white/5 transition-colors">
+                                            Sobrescribir excepciones futuras
                                         </button>
-                                    ))}
-                                </div>
+                                        <button onClick={() => { setConfirmDelete(true); setMenuOpen(false) }}
+                                            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 transition-colors border-t border-white/5">
+                                            <Trash2 className="w-4 h-4" /> Eliminar cliente
+                                        </button>
+                                    </div>
+                                )}
                             </div>
-                            <div>
-                                <label style={lbl}>Hora habitual</label>
-                                <select value={editForm.hora_habitual} onChange={e => setEditForm(f => ({ ...f, hora_habitual: e.target.value }))} style={T.inp}>
-                                    {HORAS.map(h => <option key={h} value={h}>{h}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label style={lbl}>Notas</label>
-                                <textarea value={editForm.notas} onChange={e => setEditForm(f => ({ ...f, notas: e.target.value }))} rows={2} style={{ ...T.inp, resize: 'none' }} />
-                            </div>
-                            <p className="text-xs font-medium" style={{ color: T.amber }}>⚠️ Solo afecta a sesiones futuras.</p>
-                        </div>
+                        </>
+                    ) : (
+                        <>
+                            <button onClick={handleSave} disabled={saveLoading}
+                                className="px-4 py-2 bg-[#22c55e]/20 text-[#22c55e] rounded-2xl font-black text-sm border border-[#22c55e]/30 hover:bg-[#22c55e]/30 transition-colors disabled:opacity-50 flex items-center gap-2">
+                                {saveLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Guardar
+                            </button>
+                            <button onClick={() => setEditMode(false)} className="px-4 py-2 bg-white/5 text-white/50 rounded-2xl font-bold text-sm hover:bg-white/10 transition-colors">Cancelar</button>
+                        </>
                     )}
                 </div>
             </div>
 
-            {/* Session history */}
-            <div className="px-4">
-                <h3 className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: T.p3 }}>Historial de sesiones</h3>
+            {/* Métricas rápidas */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
+                {[
+                    { label: 'Realizadas', value: realizadas, color: '#22c55e' },
+                    { label: 'Pend. pago', value: pendientesPago, color: '#f97316' },
+                    { label: 'Total pend.', value: `${totalPendiente.toFixed(0)}€`, color: '#a78bfa' },
+                ].map(m => (
+                    <div key={m.label} className="bg-white/5 border border-white/8 rounded-2xl p-3 text-center">
+                        <p className="text-xl font-black" style={{ color: m.color }}>{m.value}</p>
+                        <p className="text-white/40 text-[10px] font-bold uppercase tracking-wider mt-0.5">{m.label}</p>
+                    </div>
+                ))}
+            </div>
+
+            {/* Estructura base */}
+            <div className="bg-white/5 border border-white/8 rounded-2xl p-4 mb-5">
+                <h3 className="text-xs text-white/40 font-black uppercase tracking-widest mb-4">Estructura base</h3>
+                {!editMode ? (
+                    <div className="space-y-2.5">
+                        <Row icon={<Calendar className="w-4 h-4" />} label="Sesiones/semana" value={estructura?.sesiones_semanales} />
+                        <Row icon={<Clock className="w-4 h-4" />} label="Días" value={(estructura?.distribucion_semanal || []).map(d => DIAS_LABEL[d] || d).join(', ')} />
+                        <Row icon={<Clock className="w-4 h-4" />} label="Hora habitual" value={estructura?.hora_habitual} />
+                        <Row icon={<DollarSign className="w-4 h-4" />} label="Precio/sesión" value={`${estructura?.precio_por_sesion}€`} />
+                        {estructura?.notas && <Row icon={<Edit2 className="w-4 h-4" />} label="Notas" value={estructura.notas} />}
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="text-xs text-white/40 font-bold mb-1 block">Sesiones/semana</label>
+                                <input type="number" min="1" max="7" value={editForm.sesiones_semanales}
+                                    onChange={e => setEditForm(f => ({ ...f, sesiones_semanales: parseInt(e.target.value) || 1 }))}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none" />
+                            </div>
+                            <div>
+                                <label className="text-xs text-white/40 font-bold mb-1 block">Precio/sesión (€)</label>
+                                <input type="number" min="0" step="0.01" value={editForm.precio_por_sesion}
+                                    onChange={e => setEditForm(f => ({ ...f, precio_por_sesion: e.target.value }))}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none" />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs text-white/40 font-bold mb-2 block">Días habituales</label>
+                            <div className="flex gap-2 flex-wrap">
+                                {DIAS.map(d => (
+                                    <button key={d} onClick={() => toggleDia(d)}
+                                        className={cn('px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all border',
+                                            editForm.distribucion_semanal?.includes(d)
+                                                ? 'bg-[#22c55e]/20 text-[#22c55e] border-[#22c55e]/40'
+                                                : 'bg-white/5 text-white/40 border-white/10'
+                                        )}>
+                                        {d}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs text-white/40 font-bold mb-1 block">Hora habitual</label>
+                            <select value={editForm.hora_habitual} onChange={e => setEditForm(f => ({ ...f, hora_habitual: e.target.value }))}
+                                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none">
+                                {HORAS.map(h => <option key={h} value={h} className="bg-[#111318]">{h}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-xs text-white/40 font-bold mb-1 block">Notas</label>
+                            <textarea value={editForm.notas} onChange={e => setEditForm(f => ({ ...f, notas: e.target.value }))} rows={2}
+                                className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm outline-none resize-none" />
+                        </div>
+                        <p className="text-amber-400/70 text-xs">⚠️ Los cambios solo afectarán a sesiones futuras.</p>
+                    </div>
+                )}
+            </div>
+
+            {/* Historial sesiones */}
+            <div>
+                <h3 className="text-xs text-white/40 font-black uppercase tracking-widest mb-3">Historial de sesiones</h3>
                 {sesiones.length > 0 ? (
                     <div className="space-y-2">
                         {sesiones.map(s => (
-                            <div key={s.id} className="flex items-center gap-3 px-4 py-4 rounded-2xl" style={{ background: T.card, border: T.cardBorder, boxShadow: T.cardShadow }}>
-                                <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: s.estado === 'realizada' ? T.green : s.estado === 'cancelada' ? T.red : T.blue, boxShadow: `0 0 7px ${s.estado === 'realizada' ? 'rgba(22,163,74,0.4)' : s.estado === 'cancelada' ? 'rgba(220,38,38,0.4)' : 'rgba(37,99,235,0.4)'}` }} />
+                            <div key={s.id} className="bg-white/5 border border-white/8 rounded-2xl px-4 py-3 flex items-center gap-3">
+                                <div className={cn('w-2 h-2 rounded-full shrink-0',
+                                    s.estado === 'realizada' ? 'bg-[#22c55e]' : s.estado === 'cancelada' ? 'bg-red-400' : 'bg-white/30')} />
                                 <div className="flex-1 min-w-0">
-                                    <p className="font-black text-sm" style={{ color: T.p1 }}>{s.fecha}</p>
-                                    <p className="text-xs font-medium mt-0.5" style={{ color: T.p3 }}>{s.hora_inicio} – {s.hora_fin}</p>
+                                    <p className="text-white font-bold text-sm">{s.fecha}</p>
+                                    <p className="text-white/40 text-xs">{s.hora_inicio} – {s.hora_fin}</p>
                                 </div>
-                                <span className="text-xs font-black px-3 py-1.5 rounded-full"
-                                    style={s.pago_estado === 'pagado' ? { background: T.greenBg, color: T.green, border: '1px solid rgba(22,163,74,0.22)' } : { background: T.amberBg, color: T.amber, border: '1px solid rgba(217,119,6,0.22)' }}>
-                                    {s.pago_estado === 'pagado' ? '✓ Pagado' : 'Pendiente'}
-                                </span>
+                                <div className="text-right">
+                                    <span className={cn('text-xs font-bold px-2 py-0.5 rounded-full',
+                                        s.pago_estado === 'pagado' ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'bg-amber-400/15 text-amber-400'
+                                    )}>{s.pago_estado === 'pagado' ? 'Pagado' : 'Pendiente'}</span>
+                                </div>
                             </div>
                         ))}
                     </div>
                 ) : (
-                    <p className="text-sm text-center py-10 font-medium" style={{ color: T.p3 }}>Sin sesiones registradas aún.</p>
+                    <p className="text-white/25 text-sm text-center py-8">Sin sesiones registradas aún.</p>
                 )}
             </div>
 
-            {confirmArchive && <ConfirmModal title="¿Archivar cliente?" message="El historial, pagos y sesiones se conservarán." confirmLabel="Archivar" confirmColor={T.amber} onConfirm={handleArchive} onClose={() => setConfirmArchive(false)} />}
-            {confirmDelete && <ConfirmModal title="¿Eliminar cliente?" message="Esta acción es irreversible. Se borrarán todos los datos." confirmLabel="Eliminar permanentemente" confirmColor={T.red} onConfirm={handleDelete} onClose={() => setConfirmDelete(false)} danger />}
+            {/* Modales de confirmación */}
+            {confirmArchive && <ConfirmModal
+                title="¿Archivar cliente?"
+                message="El cliente quedará archivado. Su historial, pagos y sesiones se conservan."
+                confirmLabel="Archivar"
+                confirmClass="bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-amber-500/30"
+                onConfirm={handleArchive} onClose={() => setConfirmArchive(false)} />}
+
+            {confirmDelete && <ConfirmModal
+                title="¿Eliminar cliente?"
+                message="Esta acción es irreversible. Se borrarán todos los datos del cliente."
+                confirmLabel="Eliminar permanentemente"
+                confirmClass="bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                onConfirm={handleDelete} onClose={() => setConfirmDelete(false)} danger />}
+
+            {confirmOverwrite && <ConfirmModal
+                title="¿Sobrescribir excepciones futuras?"
+                message="Las sesiones futuras modificadas manualmente serán reemplazadas por la nueva estructura base."
+                confirmLabel="Sobrescribir"
+                confirmClass="bg-amber-500/20 text-amber-400 border-amber-500/30"
+                onConfirm={() => setConfirmOverwrite(false)} onClose={() => setConfirmOverwrite(false)} />}
+
             {menuOpen && <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />}
         </div>
     )
 }
 
 const Row = ({ icon, label, value }) => (
-    <div className="flex items-center gap-3 py-1">
-        <span style={{ color: T.p3 }}>{icon}</span>
-        <span className="text-sm w-28 shrink-0 font-medium" style={{ color: T.p3 }}>{label}</span>
-        <span className="text-sm font-black flex-1" style={{ color: T.p1 }}>{value}</span>
+    <div className="flex items-center gap-3">
+        <span className="text-white/30 shrink-0">{icon}</span>
+        <span className="text-white/40 text-sm w-28 shrink-0">{label}</span>
+        <span className="text-white font-bold text-sm">{value}</span>
     </div>
 )
 
-// ── MAIN ───────────────────────────────────────────────────────────────────────
+const ConfirmModal = ({ title, message, confirmLabel, confirmClass, onConfirm, onClose, danger }) => (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[300] flex items-center justify-center p-6">
+        <div className="bg-[#111318] border border-white/10 w-full max-w-xs rounded-3xl p-8 text-center" style={{ boxShadow: '0 0 40px rgba(0,0,0,0.8)' }}>
+            {danger && <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20"><Trash2 className="w-6 h-6 text-red-400" /></div>}
+            <h3 className="text-lg font-black text-white mb-2">{title}</h3>
+            <p className="text-white/40 text-sm mb-6">{message}</p>
+            <div className="flex gap-3">
+                <button onClick={onConfirm} className={`flex-1 py-3 rounded-2xl font-bold text-sm border transition-colors ${confirmClass}`}>{confirmLabel}</button>
+                <button onClick={onClose} className="flex-1 py-3 bg-white/5 text-white/50 rounded-2xl font-bold text-sm hover:bg-white/10">Cancelar</button>
+            </div>
+        </div>
+    </div>
+)
+
+// ─── COMPONENTE PRINCIPAL ──────────────────────────────────────────────────────
 const OwnerClientes = ({ onNavigate, initialClienteId = null }) => {
     const { user } = useAuth()
     const [clientes, setClientes] = useState([])
@@ -458,9 +500,15 @@ const OwnerClientes = ({ onNavigate, initialClienteId = null }) => {
 
     const fetchClientes = async () => {
         setLoading(true)
-        const { data } = await supabase.from('usuarios').select('*,clientes_estructura(estado,sesiones_semanales,precio_por_sesion)').eq('rol', 'cliente').order('nombre')
-        setClientes(data || []); setLoading(false)
+        const { data } = await supabase
+            .from('usuarios')
+            .select('*, clientes_estructura(estado, sesiones_semanales, precio_por_sesion)')
+            .eq('rol', 'cliente')
+            .order('nombre')
+        setClientes(data || [])
+        setLoading(false)
     }
+
     useEffect(() => { fetchClientes() }, [])
 
     const filtrados = clientes.filter(c =>
@@ -468,78 +516,74 @@ const OwnerClientes = ({ onNavigate, initialClienteId = null }) => {
         c.email?.toLowerCase().includes(busqueda.toLowerCase())
     )
 
-    const handleArchivar = async clienteId => {
+    const handleArchivar = async (clienteId) => {
         await supabase.from('clientes_estructura').update({ estado: 'archivado' }).eq('usuario_id', clienteId)
         await logRegistro({ accion: 'archivar_cliente', entidad: 'cliente', entidad_id: clienteId, modulo_origen: 'clientes', cliente_id: clienteId, autor_id: user?.id })
-        setMenuClienteId(null); fetchClientes()
+        setMenuClienteId(null)
+        fetchClientes()
     }
 
     if (fichaId) return <FichaCliente clienteId={fichaId} onBack={() => { setFichaId(null); fetchClientes() }} />
 
     return (
-        <div className="p-4" style={{ background: T.page, minHeight: '100%' }}>
-            {/* Search + add */}
-            <div className="flex items-center gap-3 mb-4">
+        <div className="p-4">
+            {/* Header */}
+            <div className="flex items-center gap-3 mb-5">
                 <div className="flex-1 relative">
-                    <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2" style={{ color: T.p3 }} />
-                    <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar cliente..."
-                        className="w-full pl-12 pr-4 py-3.5 rounded-2xl text-sm outline-none"
-                        style={{ background: '#e9ecf3', border: '1px solid rgba(0,0,0,0.1)', color: T.p1 }} />
+                    <Search className="w-4 h-4 text-white/30 absolute left-4 top-1/2 -translate-y-1/2" />
+                    <input
+                        value={busqueda}
+                        onChange={e => setBusqueda(e.target.value)}
+                        placeholder="Buscar cliente..."
+                        className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-white text-sm outline-none focus:border-[#22c55e]/40 transition-colors"
+                    />
                 </div>
                 <button onClick={() => setShowCrear(true)}
-                    className="flex items-center gap-2.5 px-5 py-3.5 rounded-2xl font-black text-base shrink-0 transition-all active:scale-95"
-                    style={btnPrimary}>
-                    <Plus className="w-5 h-5" /> Nuevo
+                    className="flex items-center gap-2 px-4 py-3 bg-[#22c55e]/15 text-[#22c55e] rounded-2xl font-bold text-sm border border-[#22c55e]/30 hover:bg-[#22c55e]/25 transition-colors shrink-0">
+                    <Plus className="w-4 h-4" /> Nuevo
                 </button>
             </div>
 
-            <p className="text-xs mb-4 font-bold" style={{ color: T.p3 }}>{filtrados.length} cliente{filtrados.length !== 1 ? 's' : ''}</p>
+            <p className="text-white/30 text-xs mb-4">{filtrados.length} cliente{filtrados.length !== 1 ? 's' : ''}</p>
 
             {loading ? (
-                <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 animate-spin" style={{ color: T.blue }} /></div>
+                <div className="flex justify-center py-16"><Loader2 className="w-7 h-7 text-[#22c55e] animate-spin" /></div>
             ) : filtrados.length > 0 ? (
-                <div className="space-y-2.5">
+                <div className="space-y-3">
                     {filtrados.map(c => {
                         const est = c.clientes_estructura?.[0]
                         const archivado = est?.estado === 'archivado'
                         return (
                             <div key={c.id}
-                                className={cn('flex items-center gap-4 rounded-2xl p-4 relative transition-all', !archivado && 'cursor-pointer active:scale-[0.99]')}
-                                style={{ background: T.card, border: T.cardBorder, boxShadow: T.cardShadow, opacity: archivado ? 0.55 : 1 }}
-                                onClick={() => !archivado && setFichaId(c.id)}>
-                                <div className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-lg shrink-0 text-white" style={{
-                                    background: archivado ? '#adb5c7' : 'linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%)',
-                                    boxShadow: archivado ? 'none' : '0 4px 14px rgba(37,99,235,0.28)'
-                                }}>
+                                className={cn('bg-white/5 border border-white/8 rounded-2xl p-4 flex items-center gap-4 relative transition-all active:scale-[0.99]',
+                                    archivado ? 'opacity-50' : 'cursor-pointer hover:border-[#22c55e]/20')}
+                                onClick={() => !archivado && setFichaId(c.id)}
+                                style={{ boxShadow: '0 0 10px rgba(34,197,94,0.04)' }}>
+                                <div className="w-10 h-10 bg-[#22c55e]/15 rounded-full flex items-center justify-center text-[#22c55e] font-black text-sm shrink-0"
+                                    style={{ boxShadow: '0 0 8px rgba(34,197,94,0.3)' }}>
                                     {c.nombre?.charAt(0)?.toUpperCase() || '?'}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="font-black text-sm tracking-tight truncate" style={{ color: T.p1 }}>{c.nombre}</p>
-                                    <p className="text-xs mt-0.5 truncate font-medium" style={{ color: T.p3 }}>
-                                        {est ? `${est.sesiones_semanales} ses/sem · ${est.precio_por_sesion}€` : 'Sin estructura'}
-                                    </p>
+                                    <p className="font-bold text-white text-sm truncate">{c.nombre}</p>
+                                    <p className="text-white/35 text-xs truncate">{est ? `${est.sesiones_semanales} ses/sem · ${est.precio_por_sesion}€` : 'Sin estructura'}</p>
                                 </div>
-                                {archivado && (<span className="text-[10px] font-black px-2 py-0.5 rounded-full" style={{ background: '#dde1ea', color: T.p3 }}>Archivado</span>)}
+                                {archivado && <span className="text-xs text-white/30 font-bold bg-white/5 px-2 py-0.5 rounded-full">Archivado</span>}
                                 <div className="relative">
-                                    <button onClick={e => { e.stopPropagation(); setMenuClienteId(menuClienteId === c.id ? null : c.id) }}
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all hover:bg-black/8"
-                                        style={{ color: T.p3 }}>
-                                        <MoreVertical className="w-4 h-4" />
+                                    <button
+                                        onClick={e => { e.stopPropagation(); setMenuClienteId(menuClienteId === c.id ? null : c.id) }}
+                                        className="p-2 rounded-xl hover:bg-white/10 transition-colors">
+                                        <MoreVertical className="w-4 h-4 text-white/30" />
                                     </button>
                                     {menuClienteId === c.id && (
-                                        <div className="absolute right-0 top-full mt-1 w-44 z-50 rounded-2xl overflow-hidden" style={{ background: '#f6f8fc', border: '1.5px solid rgba(0,0,0,0.1)', boxShadow: '0 16px 48px rgba(0,0,0,0.16)' }}>
+                                        <div className="absolute right-0 top-full mt-1 w-44 bg-[#1a1d24] border border-white/10 rounded-2xl overflow-hidden z-50 shadow-2xl">
                                             <button onClick={e => { e.stopPropagation(); setFichaId(c.id); setMenuClienteId(null) }}
-                                                className="w-full flex items-center gap-3 px-4 py-3.5 text-sm font-bold transition-colors hover:bg-black/5"
-                                                style={{ color: T.p1 }}>
-                                                <User2 className="w-4 h-4" style={{ color: T.blue }} /> Ver ficha
+                                                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/70 hover:bg-white/5 transition-colors">
+                                                <User2 className="w-4 h-4" /> Ver ficha
                                             </button>
-                                            {!archivado && (
-                                                <button onClick={e => { e.stopPropagation(); handleArchivar(c.id) }}
-                                                    className="w-full flex items-center gap-3 px-4 py-3.5 text-sm font-bold transition-colors hover:bg-amber-50"
-                                                    style={{ color: T.amber, borderTop: '1px solid rgba(0,0,0,0.07)' }}>
-                                                    <Archive className="w-4 h-4" /> Archivar
-                                                </button>
-                                            )}
+                                            {!archivado && <button onClick={e => { e.stopPropagation(); handleArchivar(c.id) }}
+                                                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-amber-400 hover:bg-amber-500/10 transition-colors">
+                                                <Archive className="w-4 h-4" /> Archivar
+                                            </button>}
                                         </div>
                                     )}
                                 </div>
@@ -548,15 +592,13 @@ const OwnerClientes = ({ onNavigate, initialClienteId = null }) => {
                     })}
                 </div>
             ) : (
-                <div className="text-center py-20">
-                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: '#e9ecf3', border: '1px solid rgba(0,0,0,0.09)' }}>
-                        <User2 className="w-8 h-8" style={{ color: T.p3 }} />
-                    </div>
-                    <p className="font-medium" style={{ color: T.p3 }}>{busqueda ? 'Sin resultados para esa búsqueda' : 'No hay clientes aún'}</p>
+                <div className="text-center py-16">
+                    <User2 className="w-12 h-12 text-white/10 mx-auto mb-3" />
+                    <p className="text-white/25 text-sm">{busqueda ? 'Sin resultados para esa búsqueda' : 'No hay clientes aún'}</p>
                 </div>
             )}
 
-            {showCrear && <ModalCrearCliente onClose={() => setShowCrear(false)} onCreated={() => fetchClientes()} />}
+            {showCrear && <ModalCrearCliente onClose={() => setShowCrear(false)} onCreated={() => { fetchClientes() }} />}
             {menuClienteId && <div className="fixed inset-0 z-40" onClick={() => setMenuClienteId(null)} />}
         </div>
     )
